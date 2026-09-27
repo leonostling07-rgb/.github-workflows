@@ -3,12 +3,12 @@ name: Render Video
 on:
   workflow_dispatch:
     inputs:
-      video_url:
-        description: "Video URL"
-        required: true
-        type: string
       script:
         description: "Voice-over script"
+        required: true
+        type: string
+      scenes:
+        description: "Video scenes JSON"
         required: true
         type: string
 
@@ -25,10 +25,6 @@ jobs:
 
       - name: Install tools
         run: sudo apt-get update && sudo apt-get install -y ffmpeg jq
-
-      - name: Download video
-        run: |
-          curl -L "${{ inputs.video_url }}" -o input.mp4
 
       - name: Generate voice
         env:
@@ -61,38 +57,77 @@ jobs:
               }
             }')" > response.json
 
-          echo "Gemini response:"
-          cat response.json
-
           AUDIO=$(jq -r '.candidates[0].content.parts[0].inlineData.data // empty' response.json)
 
           if [ -z "$AUDIO" ]; then
             echo "ERROR: No audio returned from Gemini"
+            cat response.json
             exit 1
           fi
 
           echo "$AUDIO" | base64 -d > voice.pcm
 
-          echo "Audio file size:"
-          ls -lh voice.pcm
+      - name: Parse scenes
+        run: |
+          echo '${{ inputs.scenes }}' > scenes.json
+          cat scenes.json
 
-          echo "Audio file bytes:"
-          wc -c voice.pcm
+      - name: Download scene videos
+        run: |
+          mkdir -p scenes
 
-      - name: Render video
+          jq -c '.[]' scenes.json | while read scene; do
+            NUMBER=$(echo "$scene" | jq -r '.scene')
+            URL=$(echo "$scene" | jq -r '.video_url')
+            DURATION=$(echo "$scene" | jq -r '.duration')
+
+            echo "Downloading scene $NUMBER"
+            curl -L "$URL" -o "scenes/scene_${NUMBER}.mp4"
+
+            echo "Preparing scene $NUMBER for ${DURATION} seconds"
+
+            ffmpeg -y \
+              -stream_loop -1 \
+              -i "scenes/scene_${NUMBER}.mp4" \
+              -t "$DURATION" \
+              -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920" \
+              -an \
+              -c:v libx264 \
+              -preset veryfast \
+              -crf 20 \
+              "scenes/scene_${NUMBER}_prepared.mp4"
+          done
+
+      - name: Create concat list
+        run: |
+          rm -f concat.txt
+
+          jq -r '.[].scene' scenes.json | while read NUMBER; do
+            echo "file 'scenes/scene_${NUMBER}_prepared.mp4'" >> concat.txt
+          done
+
+          cat concat.txt
+
+      - name: Combine scenes
         run: |
           ffmpeg -y \
-            -i input.mp4 \
+            -f concat \
+            -safe 0 \
+            -i concat.txt \
+            -c copy \
+            combined.mp4
+
+      - name: Add voice-over
+        run: |
+          ffmpeg -y \
+            -i combined.mp4 \
             -f s16le \
             -ar 24000 \
             -ac 1 \
             -i voice.pcm \
             -map 0:v:0 \
             -map 1:a:0 \
-            -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920" \
-            -c:v libx264 \
-            -preset veryfast \
-            -crf 20 \
+            -c:v copy \
             -c:a aac \
             -b:a 192k \
             -shortest \
