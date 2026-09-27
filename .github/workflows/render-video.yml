@@ -4,9 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       video_url:
+        description: "Video URL"
         required: true
         type: string
       audio_base64:
+        description: "Audio Base64"
         required: true
         type: string
 
@@ -16,14 +18,12 @@ jobs:
 
     steps:
       - name: Download video
-        run: |
-          curl -L "${{ inputs.video_url }}" -o input.mp4
+        run: curl -L "${{ inputs.video_url }}" -o input.mp4
 
       - name: Decode audio
-        run: |
-          echo "${{ inputs.audio_base64 }}" | base64 -d > voice.wav
+        run: echo "${{ inputs.audio_base64 }}" | base64 --decode > voice.wav
 
-      - name: Render
+      - name: Render video
         run: |
           ffmpeg -y \
             -i input.mp4 \
@@ -39,9 +39,8 @@ jobs:
             -movflags +faststart \
             output.mp4
 
-      - name: Upload finished video
+      - name: Upload video
         uses: actions/upload-artifact@v4
         with:
           name: finished-video
           path: output.mp4
-          retention-days: 7
