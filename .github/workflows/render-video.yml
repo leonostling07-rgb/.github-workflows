@@ -7,8 +7,8 @@ on:
         description: "Video URL"
         required: true
         type: string
-      audio_base64:
-        description: "Audio Base64"
+      script:
+        description: "Voice-over script"
         required: true
         type: string
 
@@ -20,18 +20,47 @@ jobs:
       - name: Download video
         run: curl -L "${{ inputs.video_url }}" -o input.mp4
 
-      - name: Decode audio
-        run: echo "${{ inputs.audio_base64 }}" | base64 --decode > voice.wav
+      - name: Generate voice
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          curl -s \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-tts:generateContent" \
+            -H "x-goog-api-key: $GEMINI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg text "${{ inputs.script }}" '{
+              contents: [{
+                parts: [{
+                  text: $text
+                }]
+              }],
+              generationConfig: {
+                responseModalities: ["AUDIO"],
+                speechConfig: {
+                  voiceConfig: {
+                    prebuiltVoiceConfig: {
+                      voiceName: "Kore"
+                    }
+                  }
+                }
+              }
+            }')" > response.json
+
+          jq -r '.candidates[0].content.parts[0].inlineData.data' response.json | base64 --decode > voice.pcm
 
       - name: Render video
         run: |
           ffmpeg -y \
             -i input.mp4 \
-            -i voice.wav \
+            -f s16le \
+            -ar 24000 \
+            -ac 1 \
+            -i voice.pcm \
             -map 0:v:0 \
             -map 1:a:0 \
+            -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920" \
             -c:v libx264 \
-            -preset medium \
+            -preset veryfast \
             -crf 20 \
             -c:a aac \
             -b:a 192k \
