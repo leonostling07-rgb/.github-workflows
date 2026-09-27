@@ -17,8 +17,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg jq
+
       - name: Download video
-        run: curl -L "${{ inputs.video_url }}" -o input.mp4
+        run: |
+          curl -L "${{ inputs.video_url }}" -o input.mp4
 
       - name: Generate voice
         env:
