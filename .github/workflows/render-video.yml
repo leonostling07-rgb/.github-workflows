@@ -125,7 +125,6 @@ jobs:
             URL=$(echo "$scene" | jq -r '.video_url')
             DURATION=$(echo "$scene" | jq -r '.duration')
 
-            # Convert possible Markdown link into plain URL
             if [[ "$URL" =~ ^\[.*\]\(.*\)$ ]]; then
               URL=$(echo "$URL" | sed -E 's/^\[([^]]+)\]\(.*\)$/\1/')
             fi
@@ -143,7 +142,7 @@ jobs:
 
             echo "Downloaded scene $NUMBER"
 
-            ffmpeg -y \
+            ffmpeg -nostdin -y \
               -stream_loop -1 \
               -i "scenes/scene_${NUMBER}.mp4" \
               -t "$DURATION" \
@@ -158,6 +157,26 @@ jobs:
             echo "Scene $NUMBER prepared."
 
           done < scene_list.txt
+
+      # --------------------------------------------------
+      # VERIFY ALL SCENES EXIST
+      # --------------------------------------------------
+
+      - name: Verify scenes
+        run: |
+
+          echo "Prepared scenes:"
+
+          ls -lh scenes/*_prepared.mp4
+
+          COUNT=$(find scenes -name '*_prepared.mp4' | wc -l)
+
+          echo "Number of prepared scenes: $COUNT"
+
+          if [ "$COUNT" -ne 6 ]; then
+            echo "ERROR: Expected 6 prepared scenes."
+            exit 1
+          fi
 
       # --------------------------------------------------
       # CREATE CONCAT LIST
@@ -182,7 +201,7 @@ jobs:
       - name: Combine scenes
         run: |
 
-          ffmpeg -y \
+          ffmpeg -nostdin -y \
             -f concat \
             -safe 0 \
             -i concat.txt \
@@ -204,7 +223,7 @@ jobs:
       - name: Add voice-over
         run: |
 
-          ffmpeg -y \
+          ffmpeg -nostdin -y \
             -i combined.mp4 \
             -f s16le \
             -ar 24000 \
