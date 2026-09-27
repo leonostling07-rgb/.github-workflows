@@ -7,6 +7,7 @@ on:
         description: "Voice-over script"
         required: true
         type: string
+
       scenes:
         description: "Video scenes JSON"
         required: true
@@ -20,71 +21,129 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install tools
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg jq
+
+      # --------------------------------------------------
+      # GENERATE GEMINI VOICE
+      # --------------------------------------------------
 
       - name: Generate voice
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SCRIPT_TEXT: ${{ inputs.script }}
         run: |
+
           curl -sS \
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-tts:generateContent" \
             -H "x-goog-api-key: $GEMINI_API_KEY" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg text "${{ inputs.script }}" '{
-              contents: [{
-                role: "user",
-                parts: [{
-                  text: $text
-                }]
-              }],
-              generationConfig: {
-                responseModalities: ["AUDIO"],
-                responseFormat: {
-                  audio: {
-                    mimeType: "AUDIO_L16",
-                    sampleRate: 24000
-                  }
-                },
-                speechConfig: {
-                  voiceConfig: {
-                    voice: "Kore"
+            -d "$(jq -n \
+              --arg text "$SCRIPT_TEXT" \
+              '{
+                contents: [{
+                  role: "user",
+                  parts: [{
+                    text: $text
+                  }]
+                }],
+                generationConfig: {
+                  responseModalities: ["AUDIO"],
+                  responseFormat: {
+                    audio: {
+                      mimeType: "AUDIO_L16",
+                      sampleRate: 24000
+                    }
+                  },
+                  speechConfig: {
+                    voiceConfig: {
+                      voice: "Kore"
+                    }
                   }
                 }
-              }
-            }')" > response.json
+              }')" > response.json
 
-          AUDIO=$(jq -r '.candidates[0].content.parts[0].inlineData.data // empty' response.json)
+          echo "Gemini response:"
+          cat response.json
+
+          AUDIO=$(jq -r \
+            '.candidates[0].content.parts[0].inlineData.data // empty' \
+            response.json)
 
           if [ -z "$AUDIO" ]; then
             echo "ERROR: No audio returned from Gemini"
-            cat response.json
             exit 1
           fi
 
           echo "$AUDIO" | base64 -d > voice.pcm
 
+          echo "Voice generated successfully."
+
+          ls -lh voice.pcm
+
+          ffprobe \
+            -f s16le \
+            -ar 24000 \
+            -ac 1 \
+            -i voice.pcm \
+            -show_entries format=duration \
+            -v quiet \
+            -of default=noprint_wrappers=1:nokey=1
+
+      # --------------------------------------------------
+      # PARSE SCENES
+      # --------------------------------------------------
+
       - name: Parse scenes
+        env:
+          SCENES_JSON: ${{ inputs.scenes }}
         run: |
-          echo '${{ inputs.scenes }}' > scenes.json
+
+          printf '%s' "$SCENES_JSON" > scenes.json
+
+          echo "Scenes JSON:"
           cat scenes.json
+
+          echo
+          echo "Validating scenes JSON..."
+
+          jq empty scenes.json
+
+          echo "Scenes JSON is valid."
+
+      # --------------------------------------------------
+      # DOWNLOAD AND PREPARE EACH SCENE
+      # --------------------------------------------------
 
       - name: Download scene videos
         run: |
+
           mkdir -p scenes
 
-          jq -c '.[]' scenes.json | while read scene; do
+          jq -c '.[]' scenes.json | while read -r scene; do
+
             NUMBER=$(echo "$scene" | jq -r '.scene')
             URL=$(echo "$scene" | jq -r '.video_url')
             DURATION=$(echo "$scene" | jq -r '.duration')
 
-            echo "Downloading scene $NUMBER"
-            curl -L "$URL" -o "scenes/scene_${NUMBER}.mp4"
+            echo "----------------------------------------"
+            echo "Preparing scene $NUMBER"
+            echo "URL: $URL"
+            echo "Duration: $DURATION seconds"
+            echo "----------------------------------------"
 
-            echo "Preparing scene $NUMBER for ${DURATION} seconds"
+            curl -L \
+              --fail \
+              "$URL" \
+              -o "scenes/scene_${NUMBER}.mp4"
+
+            echo "Downloaded scene $NUMBER"
 
             ffmpeg -y \
               -stream_loop -1 \
@@ -95,21 +154,36 @@ jobs:
               -c:v libx264 \
               -preset veryfast \
               -crf 20 \
+              -pix_fmt yuv420p \
               "scenes/scene_${NUMBER}_prepared.mp4"
+
+            echo "Scene $NUMBER prepared."
+
           done
+
+      # --------------------------------------------------
+      # CREATE CONCAT LIST
+      # --------------------------------------------------
 
       - name: Create concat list
         run: |
+
           rm -f concat.txt
 
-          jq -r '.[].scene' scenes.json | while read NUMBER; do
+          jq -r '.[].scene' scenes.json | while read -r NUMBER; do
             echo "file 'scenes/scene_${NUMBER}_prepared.mp4'" >> concat.txt
           done
 
+          echo "Concat list:"
           cat concat.txt
+
+      # --------------------------------------------------
+      # COMBINE ALL SCENES
+      # --------------------------------------------------
 
       - name: Combine scenes
         run: |
+
           ffmpeg -y \
             -f concat \
             -safe 0 \
@@ -117,8 +191,21 @@ jobs:
             -c copy \
             combined.mp4
 
+          echo "Combined video created."
+
+          ffprobe \
+            -v error \
+            -show_entries format=duration \
+            -of default=noprint_wrappers=1:nokey=1 \
+            combined.mp4
+
+      # --------------------------------------------------
+      # ADD GEMINI VOICE
+      # --------------------------------------------------
+
       - name: Add voice-over
         run: |
+
           ffmpeg -y \
             -i combined.mp4 \
             -f s16le \
@@ -134,14 +221,32 @@ jobs:
             -movflags +faststart \
             output.mp4
 
+          echo "Final video created."
+
+          ffprobe \
+            -v error \
+            -show_entries format=duration \
+            -of default=noprint_wrappers=1:nokey=1 \
+            output.mp4
+
+      # --------------------------------------------------
+      # SAVE VIDEO TO GITHUB
+      # --------------------------------------------------
+
       - name: Save video to repository
         run: |
+
           mkdir -p videos
+
           cp output.mp4 videos/latest.mp4
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add videos/latest.mp4
-          git commit -m "Update rendered video" || echo "No changes to commit"
+
+          git commit \
+            -m "Update rendered video" \
+            || echo "No changes to commit"
+
           git push
