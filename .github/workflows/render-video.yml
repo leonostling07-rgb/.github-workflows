@@ -56,7 +56,23 @@ jobs:
               }
             }')" > response.json
 
-          jq -r '.candidates[0].content.parts[0].inlineData.data' response.json | base64 --decode > voice.pcm
+          echo "Gemini response:"
+          cat response.json
+
+          AUDIO=$(jq -r '.candidates[0].content.parts[0].inlineData.data // empty' response.json)
+
+          if [ -z "$AUDIO" ]; then
+            echo "ERROR: No audio returned from Gemini"
+            exit 1
+          fi
+
+          echo "$AUDIO" | base64 -d > voice.pcm
+
+          echo "Audio file size:"
+          ls -lh voice.pcm
+
+          echo "Audio file bytes:"
+          wc -c voice.pcm
 
       - name: Render video
         run: |
