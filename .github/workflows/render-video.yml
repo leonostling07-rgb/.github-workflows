@@ -34,23 +34,28 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          curl -s \
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent" \
+          curl -sS \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash-tts:generateContent" \
             -H "x-goog-api-key: $GEMINI_API_KEY" \
             -H "Content-Type: application/json" \
             -d "$(jq -n --arg text "${{ inputs.script }}" '{
               contents: [{
+                role: "user",
                 parts: [{
                   text: $text
                 }]
               }],
               generationConfig: {
                 responseModalities: ["AUDIO"],
+                responseFormat: {
+                  audio: {
+                    mimeType: "AUDIO_L16",
+                    sampleRate: 24000
+                  }
+                },
                 speechConfig: {
                   voiceConfig: {
-                    prebuiltVoiceConfig: {
-                      voiceName: "Kore"
-                    }
+                    voice: "Kore"
                   }
                 }
               }
