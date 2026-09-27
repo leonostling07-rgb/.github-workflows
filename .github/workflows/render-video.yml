@@ -30,9 +30,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg jq
 
-      # --------------------------------------------------
+      # ==================================================
       # GENERATE GEMINI VOICE
-      # --------------------------------------------------
+      # ==================================================
 
       - name: Generate voice
         env:
@@ -77,19 +77,28 @@ jobs:
             response.json)
 
           if [ -z "$AUDIO" ]; then
-            echo "ERROR: No audio returned from Gemini"
+            echo "ERROR: Gemini returned no audio."
             exit 1
           fi
 
           echo "$AUDIO" | base64 -d > voice.pcm
 
-          echo "Voice generated successfully."
+          VOICE_BYTES=$(wc -c < voice.pcm)
 
-          ls -lh voice.pcm
+          VOICE_DURATION=$(awk \
+            -v bytes="$VOICE_BYTES" \
+            'BEGIN { printf "%.3f", bytes / (24000 * 2) }')
 
-      # --------------------------------------------------
+          echo "Voice duration: ${VOICE_DURATION} seconds"
+
+          if awk "BEGIN {exit !($VOICE_DURATION < 10)}"; then
+            echo "ERROR: Voice is unexpectedly short."
+            exit 1
+          fi
+
+      # ==================================================
       # PARSE SCENES
-      # --------------------------------------------------
+      # ==================================================
 
       - name: Parse scenes
         env:
@@ -98,117 +107,228 @@ jobs:
 
           printf '%s' "$SCENES_JSON" > scenes.json
 
-          echo "Scenes JSON:"
+          echo "Received scenes JSON:"
           cat scenes.json
 
           echo
-          echo "Validating scenes JSON..."
+          echo "Validating JSON..."
 
           jq empty scenes.json
 
-          echo "Scenes JSON is valid."
+          SCENE_COUNT=$(jq 'length' scenes.json)
 
-      # --------------------------------------------------
-      # DOWNLOAD AND PREPARE EACH SCENE
-      # --------------------------------------------------
+          echo "Scene count: $SCENE_COUNT"
 
-      - name: Download scene videos
+          if [ "$SCENE_COUNT" -lt 5 ]; then
+            echo "ERROR: Fewer than 5 scenes were received."
+            exit 1
+          fi
+
+      # ==================================================
+      # SCALE SCENE DURATIONS TO MATCH VOICE
+      # ==================================================
+
+      - name: Match scene durations to voice
+        env:
+          VOICE_DURATION: ${{ '' }}
+        run: |
+
+          VOICE_BYTES=$(wc -c < voice.pcm)
+
+          VOICE_DURATION=$(awk \
+            -v bytes="$VOICE_BYTES" \
+            'BEGIN { printf "%.6f", bytes / (24000 * 2) }')
+
+          ORIGINAL_TOTAL=$(jq \
+            '[.[].duration] | add' \
+            scenes.json)
+
+          echo "Original scene duration total: ${ORIGINAL_TOTAL} seconds"
+          echo "Voice duration: ${VOICE_DURATION} seconds"
+
+          if awk "BEGIN {exit !($ORIGINAL_TOTAL <= 0)}"; then
+            echo "ERROR: Invalid scene duration total."
+            exit 1
+          fi
+
+          SCALE=$(awk \
+            -v voice="$VOICE_DURATION" \
+            -v total="$ORIGINAL_TOTAL" \
+            'BEGIN { printf "%.8f", voice / total }')
+
+          echo "Duration scale factor: $SCALE"
+
+          jq \
+            --argjson scale "$SCALE" \
+            'map(
+              .duration =
+                ((.duration * $scale * 1000 | round) / 1000)
+            )' \
+            scenes.json > scaled_scenes.json
+
+          mv scaled_scenes.json scenes.json
+
+          echo
+          echo "Adjusted scenes:"
+          jq '.' scenes.json
+
+          ADJUSTED_TOTAL=$(jq \
+            '[.[].duration] | add' \
+            scenes.json)
+
+          echo
+          echo "Adjusted total duration: ${ADJUSTED_TOTAL} seconds"
+
+      # ==================================================
+      # DOWNLOAD + PREPARE SCENES
+      # ==================================================
+
+      - name: Download and prepare scene videos
         run: |
 
           mkdir -p scenes
 
-          jq -c '.[]' scenes.json > scene_list.txt
+          for NUMBER in $(jq -r '.[].scene' scenes.json); do
 
-          while IFS= read -r scene; do
+            URL=$(jq -r \
+              --argjson number "$NUMBER" \
+              '.[] | select(.scene == $number) | .video_url' \
+              scenes.json)
 
-            NUMBER=$(echo "$scene" | jq -r '.scene')
-            URL=$(echo "$scene" | jq -r '.video_url')
-            DURATION=$(echo "$scene" | jq -r '.duration')
+            DURATION=$(jq -r \
+              --argjson number "$NUMBER" \
+              '.[] | select(.scene == $number) | .duration' \
+              scenes.json)
 
+            # Handle accidental Markdown-style URLs.
             if [[ "$URL" =~ ^\[.*\]\(.*\)$ ]]; then
-              URL=$(echo "$URL" | sed -E 's/^\[([^]]+)\]\(.*\)$/\1/')
+              URL=$(printf '%s' "$URL" | sed -E 's/^\[([^]]+)\]\(([^)]+)\)$/\2/')
             fi
 
-            echo "----------------------------------------"
-            echo "Preparing scene $NUMBER"
+            echo
+            echo "========================================"
+            echo "SCENE $NUMBER"
             echo "URL: $URL"
-            echo "Duration: $DURATION seconds"
-            echo "----------------------------------------"
+            echo "DURATION: $DURATION"
+            echo "========================================"
 
-            curl -L \
+            curl \
+              --location \
               --fail \
+              --retry 3 \
+              --retry-all-errors \
               "$URL" \
               -o "scenes/scene_${NUMBER}.mp4"
 
             echo "Downloaded scene $NUMBER"
 
-            ffmpeg -nostdin -y \
+            ffmpeg \
+              -nostdin \
+              -y \
               -stream_loop -1 \
               -i "scenes/scene_${NUMBER}.mp4" \
               -t "$DURATION" \
-              -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920" \
+              -vf "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30" \
               -an \
               -c:v libx264 \
               -preset veryfast \
               -crf 20 \
               -pix_fmt yuv420p \
+              -r 30 \
+              -video_track_timescale 90000 \
               "scenes/scene_${NUMBER}_prepared.mp4"
 
-            echo "Scene $NUMBER prepared."
+            echo "Prepared scene $NUMBER"
 
-          done < scene_list.txt
+          done
 
-      # --------------------------------------------------
-      # VERIFY ALL SCENES EXIST
-      # --------------------------------------------------
+      # ==================================================
+      # VERIFY ALL SCENES
+      # ==================================================
 
-      - name: Verify scenes
+      - name: Verify prepared scenes
         run: |
 
-          echo "Prepared scenes:"
+          EXPECTED=$(jq 'length' scenes.json)
 
-          ls -lh scenes/*_prepared.mp4
+          ACTUAL=$(find scenes \
+            -name '*_prepared.mp4' \
+            -type f | wc -l)
 
-          COUNT=$(find scenes -name '*_prepared.mp4' | wc -l)
+          echo "Expected scenes: $EXPECTED"
+          echo "Prepared scenes: $ACTUAL"
 
-          echo "Number of prepared scenes: $COUNT"
-
-          if [ "$COUNT" -ne 6 ]; then
-            echo "ERROR: Expected 6 prepared scenes."
+          if [ "$EXPECTED" -ne "$ACTUAL" ]; then
+            echo "ERROR: Not all scenes were prepared."
             exit 1
           fi
 
-      # --------------------------------------------------
-      # CREATE CONCAT LIST
-      # --------------------------------------------------
+          for NUMBER in $(jq -r '.[].scene' scenes.json); do
 
-      - name: Create concat list
-        run: |
+            FILE="scenes/scene_${NUMBER}_prepared.mp4"
 
-          rm -f concat.txt
+            if [ ! -f "$FILE" ]; then
+              echo "ERROR: Missing $FILE"
+              exit 1
+            fi
 
-          jq -r '.[].scene' scenes.json | while IFS= read -r NUMBER; do
-            echo "file 'scenes/scene_${NUMBER}_prepared.mp4'" >> concat.txt
+            DURATION=$(ffprobe \
+              -v error \
+              -show_entries format=duration \
+              -of default=noprint_wrappers=1:nokey=1 \
+              "$FILE")
+
+            echo "Scene $NUMBER final duration: $DURATION seconds"
+
           done
 
-          echo "Concat list:"
-          cat concat.txt
-
-      # --------------------------------------------------
-      # COMBINE ALL SCENES
-      # --------------------------------------------------
+      # ==================================================
+      # COMBINE SCENES USING CONCAT FILTER
+      # ==================================================
 
       - name: Combine scenes
         run: |
 
-          ffmpeg -nostdin -y \
-            -f concat \
-            -safe 0 \
-            -i concat.txt \
-            -c copy \
+          INPUT_ARGS=()
+          FILTER=""
+          INDEX=0
+          COUNT=0
+
+          for NUMBER in $(jq -r '.[].scene' scenes.json); do
+
+            INPUT_ARGS+=(
+              -i
+              "scenes/scene_${NUMBER}_prepared.mp4"
+            )
+
+            FILTER="${FILTER}[${INDEX}:v]"
+
+            INDEX=$((INDEX + 1))
+            COUNT=$((COUNT + 1))
+
+          done
+
+          FILTER="${FILTER}concat=n=${COUNT}:v=1:a=0[v]"
+
+          echo "Concat filter:"
+          echo "$FILTER"
+
+          ffmpeg \
+            -nostdin \
+            -y \
+            "${INPUT_ARGS[@]}" \
+            -filter_complex "$FILTER" \
+            -map "[v]" \
+            -c:v libx264 \
+            -preset veryfast \
+            -crf 20 \
+            -pix_fmt yuv420p \
+            -r 30 \
+            -video_track_timescale 90000 \
             combined.mp4
 
-          echo "Combined video created."
+          echo
+          echo "Combined video duration:"
 
           ffprobe \
             -v error \
@@ -216,14 +336,16 @@ jobs:
             -of default=noprint_wrappers=1:nokey=1 \
             combined.mp4
 
-      # --------------------------------------------------
-      # ADD GEMINI VOICE
-      # --------------------------------------------------
+      # ==================================================
+      # ADD VOICE
+      # ==================================================
 
       - name: Add voice-over
         run: |
 
-          ffmpeg -nostdin -y \
+          ffmpeg \
+            -nostdin \
+            -y \
             -i combined.mp4 \
             -f s16le \
             -ar 24000 \
@@ -238,7 +360,8 @@ jobs:
             -movflags +faststart \
             output.mp4
 
-          echo "Final video created."
+          echo
+          echo "FINAL VIDEO DURATION:"
 
           ffprobe \
             -v error \
@@ -246,9 +369,9 @@ jobs:
             -of default=noprint_wrappers=1:nokey=1 \
             output.mp4
 
-      # --------------------------------------------------
-      # SAVE VIDEO TO GITHUB
-      # --------------------------------------------------
+      # ==================================================
+      # SAVE FINAL VIDEO
+      # ==================================================
 
       - name: Save video to repository
         run: |
