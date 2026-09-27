@@ -1,0 +1,47 @@
+name: Render Video
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        required: true
+        type: string
+      audio_base64:
+        required: true
+        type: string
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download video
+        run: |
+          curl -L "${{ inputs.video_url }}" -o input.mp4
+
+      - name: Decode audio
+        run: |
+          echo "${{ inputs.audio_base64 }}" | base64 -d > voice.wav
+
+      - name: Render
+        run: |
+          ffmpeg -y \
+            -i input.mp4 \
+            -i voice.wav \
+            -map 0:v:0 \
+            -map 1:a:0 \
+            -c:v libx264 \
+            -preset medium \
+            -crf 20 \
+            -c:a aac \
+            -b:a 192k \
+            -shortest \
+            -movflags +faststart \
+            output.mp4
+
+      - name: Upload finished video
+        uses: actions/upload-artifact@v4
+        with:
+          name: finished-video
+          path: output.mp4
+          retention-days: 7
