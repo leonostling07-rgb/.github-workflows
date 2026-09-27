@@ -87,15 +87,6 @@ jobs:
 
           ls -lh voice.pcm
 
-          ffprobe \
-            -f s16le \
-            -ar 24000 \
-            -ac 1 \
-            -i voice.pcm \
-            -show_entries format=duration \
-            -v quiet \
-            -of default=noprint_wrappers=1:nokey=1
-
       # --------------------------------------------------
       # PARSE SCENES
       # --------------------------------------------------
@@ -126,11 +117,18 @@ jobs:
 
           mkdir -p scenes
 
-          jq -c '.[]' scenes.json | while read -r scene; do
+          jq -c '.[]' scenes.json > scene_list.txt
+
+          while IFS= read -r scene; do
 
             NUMBER=$(echo "$scene" | jq -r '.scene')
             URL=$(echo "$scene" | jq -r '.video_url')
             DURATION=$(echo "$scene" | jq -r '.duration')
+
+            # Convert possible Markdown link into plain URL
+            if [[ "$URL" =~ ^\[.*\]\(.*\)$ ]]; then
+              URL=$(echo "$URL" | sed -E 's/^\[([^]]+)\]\(.*\)$/\1/')
+            fi
 
             echo "----------------------------------------"
             echo "Preparing scene $NUMBER"
@@ -159,7 +157,7 @@ jobs:
 
             echo "Scene $NUMBER prepared."
 
-          done
+          done < scene_list.txt
 
       # --------------------------------------------------
       # CREATE CONCAT LIST
@@ -170,7 +168,7 @@ jobs:
 
           rm -f concat.txt
 
-          jq -r '.[].scene' scenes.json | while read -r NUMBER; do
+          jq -r '.[].scene' scenes.json | while IFS= read -r NUMBER; do
             echo "file 'scenes/scene_${NUMBER}_prepared.mp4'" >> concat.txt
           done
 
