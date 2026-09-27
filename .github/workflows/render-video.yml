@@ -35,7 +35,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           curl -s \
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-tts:generateContent" \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent" \
             -H "x-goog-api-key: $GEMINI_API_KEY" \
             -H "Content-Type: application/json" \
             -d "$(jq -n --arg text "${{ inputs.script }}" '{
