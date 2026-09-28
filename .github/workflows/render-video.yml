@@ -69,3 +69,33 @@ jobs:
           git commit -m "Render video" || echo "nothing to commit"
           git pull --rebase || true
           git push
+
+      - name: Notify n8n callback
+        if: always()
+        env:
+          N8N_CALLBACK_URL: https://whatifworld.app.n8n.cloud/webhook/render-callback
+          IN_TITLE: ${{ inputs.title }}
+          IN_SCRIPT: ${{ inputs.script }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          status = "success" if os.environ.get("JOB_STATUS") == "success" else "failure"
+          payload = json.dumps({
+              "status": status,
+              "title": os.environ.get("IN_TITLE", ""),
+              "voiceover": os.environ.get("IN_SCRIPT", ""),
+              "run_url": os.environ.get("RUN_URL", ""),
+          }).encode()
+          req = urllib.request.Request(
+              os.environ["N8N_CALLBACK_URL"],
+              data=payload,
+              headers={"Content-Type": "application/json"},
+          )
+          try:
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  print("callback status", r.status)
+          except Exception as e:
+              print("callback failed:", e)
+          PY
