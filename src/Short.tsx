@@ -58,10 +58,18 @@ const Scrim: React.FC = () => (
   <AbsoluteFill style={{ background: "linear-gradient(180deg, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0.15) 35%, rgba(0,0,0,0.55) 100%)" }} />
 );
 
-const Fade: React.FC<{ duration: number; children: React.ReactNode }> = ({ duration, children }) => {
+// Directional transition: each scene slides in from the right and out to the left,
+// combined with a fade, so cuts feel intentional and push the story "forward".
+const Transition: React.FC<{ duration: number; index: number; children: React.ReactNode }> = ({ duration, index, children }) => {
   const f = useCurrentFrame();
-  const o = interpolate(f, [0, 8, duration - 10, duration], [0, 1, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  return <AbsoluteFill style={{ opacity: o }}>{children}</AbsoluteFill>;
+  const IN = 12;
+  const OUT = 12;
+  const dir = index % 2 === 0 ? 1 : -1; // alternate slide direction for rhythm
+  const o = interpolate(f, [0, IN, duration - OUT, duration], [0, 1, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const inX = interpolate(f, [0, IN], [90 * dir, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const outX = interpolate(f, [duration - OUT, duration], [0, -70 * dir], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const scale = interpolate(f, [0, IN], [1.04, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  return <AbsoluteFill style={{ opacity: o, transform: `translateX(${inX + outX}px) scale(${scale})` }}>{children}</AbsoluteFill>;
 };
 
 const Center: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -198,11 +206,11 @@ export const Short: React.FC<ShortProps> = ({ theme, scenes, hasMusic }) => {
     <AbsoluteFill style={{ background: theme.background }}>
       {scenes.map((s, i) => (
         <Sequence key={i} from={s.from} durationInFrames={s.duration}>
-          <Fade duration={s.duration}>
+          <Transition duration={s.duration} index={i}>
             <MediaBG s={s} theme={theme} duration={s.duration} />
             <Scrim />
             <Overlay s={s} t={theme} />
-          </Fade>
+          </Transition>
         </Sequence>
       ))}
       <EndCard t={theme} total={durationInFrames} />
