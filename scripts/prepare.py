@@ -96,10 +96,11 @@ def pexels_photo(query):
 def pexels_video(query):
     return with_deadline(25, _pexels_video, query)
 
-def pollinations_url(prompt):
-    # "turbo" is far faster and less prone to long queue stalls than "flux".
+def pollinations_url(prompt, model="flux"):
+    # "flux" looks noticeably sharper/cleaner than "turbo"; we try flux first and
+    # fall back to turbo (faster, less likely to stall) if flux fails or times out.
     seed = abs(hash(prompt)) % 100000
-    params = urllib.parse.urlencode({"width": 1080, "height": 1920, "nologo": "true", "seed": seed, "model": "turbo"})
+    params = urllib.parse.urlencode({"width": 1080, "height": 1920, "nologo": "true", "seed": seed, "model": model})
     return "https://image.pollinations.ai/prompt/" + urllib.parse.quote(prompt[:400]) + "?" + params
 
 for i, s in enumerate(scenes):
@@ -122,12 +123,33 @@ for i, s in enumerate(scenes):
                 media_file, media_type = f"media_{i}.jpg", "image"
 
     if not media_file:  # ai source, or stock fell through
-        if download(pollinations_url(ai_prompt), f"public/media_{i}.jpg"):
-            media_file, media_type = f"media_{i}.jpg", "image"
+        # Try flux (sharp) first, then turbo (fast) as a fallback, so a single slow
+        # or failed request never leaves the scene without a picture.
+        for model in ("flux", "turbo"):
+            if download(pollinations_url(ai_prompt, model), f"public/media_{i}.jpg"):
+                media_file, media_type = f"media_{i}.jpg", "image"
+                break
 
     s["media_file"] = media_file
     s["media_type"] = media_type
     print(f"scene {i}: source={source} pref={media_pref} -> {media_file} ({media_type})")
+
+# ---------------- guarantee every scene has a picture (no more blank scenes) ----------------
+# If any scene still has no image (all fetches failed/timed out), reuse the nearest
+# earlier scene's image so the video is never blank. As a last resort, copy the
+# first available image to any leading scenes that are still empty.
+last_good = None
+for i, s in enumerate(scenes):
+    if s.get("media_file"):
+        last_good = s["media_file"]
+    elif last_good:
+        s["media_file"], s["media_type"] = last_good, "image"
+        print(f"scene {i}: reused earlier image {last_good}")
+first_good = next((s["media_file"] for s in scenes if s.get("media_file")), None)
+if first_good:
+    for s in scenes:
+        if not s.get("media_file"):
+            s["media_file"], s["media_type"] = first_good, "image"
 
 # ---------------- audio length (stdlib, never hangs) ----------------
 def wav_duration(path):
