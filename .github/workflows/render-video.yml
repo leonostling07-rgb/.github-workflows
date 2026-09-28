@@ -33,7 +33,7 @@ jobs:
             libatk-bridge2.0-0 libpango-1.0-0 libcairo2 libcups2 ffmpeg
 
       - name: Install python tools
-        run: pip install faster-whisper edge-tts
+        run: pip install faster-whisper edge-tts requests
 
       - name: Make voiceover (free, edge-tts)
         env:
@@ -43,13 +43,14 @@ jobs:
           edge-tts --voice en-US-AndrewNeural --file script.txt --write-media voice.mp3
           ffmpeg -y -i voice.mp3 -ar 24000 -ac 1 voice.wav
 
-      - name: Prepare props (whisper word timings + scene timing)
+      - name: Prepare props (fetch visuals + whisper scene timing)
         env:
           IN_SCRIPT: ${{ inputs.script }}
           IN_SCENES: ${{ inputs.scenes }}
           IN_TITLE: ${{ inputs.title }}
           IN_THEME: ${{ inputs.theme }}
           IN_AUDIO: voice.wav
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
         run: python scripts/prepare.py
 
       - name: Install Remotion
