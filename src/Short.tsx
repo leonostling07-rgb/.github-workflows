@@ -62,13 +62,16 @@ const GradientBG: React.FC<{ theme: Theme }> = ({ theme }) => {
   );
 };
 
-const MediaBG: React.FC<{ s: Scene; theme: Theme; duration: number }> = ({ s, theme, duration }) => {
+const MediaBG: React.FC<{ s: Scene; theme: Theme; duration: number; index: number }> = ({ s, theme, duration, index }) => {
   const f = useCurrentFrame();
   if (!s.media_file) return <GradientBG theme={theme} />;
   const src = staticFile(s.media_file);
-  const scale = interpolate(f, [0, duration], [1.08, 1.22], { extrapolateRight: "clamp" });
-  const panX = interpolate(f, [0, duration], [-20, 20], { extrapolateRight: "clamp" });
-  const panY = interpolate(f, [0, duration], [15, -15], { extrapolateRight: "clamp" });
+  // Continuous, gently accelerating Ken Burns move that alternates direction each
+  // scene so the whole video is always moving and never sits on a static frame.
+  const dir = index % 2 === 0 ? 1 : -1;
+  const scale = interpolate(f, [0, duration], [1.12, 1.3], { extrapolateRight: "clamp" });
+  const panX = interpolate(f, [0, duration], [-30 * dir, 30 * dir], { extrapolateRight: "clamp" });
+  const panY = interpolate(f, [0, duration], [22, -22], { extrapolateRight: "clamp" });
   const common: React.CSSProperties = { width: "100%", height: "100%", objectFit: "cover" };
   return (
     <AbsoluteFill style={{ background: theme.background }}>
@@ -336,11 +339,8 @@ export const Short: React.FC<ShortProps> = ({ theme, scenes, words, hasMusic }) 
       {scenes.map((s, i) => (
         <Sequence key={i} from={s.from} durationInFrames={s.duration}>
           <Transition duration={s.duration} index={i}>
-            <MediaBG s={s} theme={theme} duration={s.duration} />
+            <MediaBG s={s} theme={theme} duration={s.duration} index={i} />
             <Scrim />
-            <SceneObjects objects={s.objects} duration={s.duration} />
-            <Annotations items={s.annotations} theme={theme} />
-            <Overlay s={s} t={theme} />
           </Transition>
         </Sequence>
       ))}
