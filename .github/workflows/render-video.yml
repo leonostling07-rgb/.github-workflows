@@ -7,7 +7,7 @@ on:
       scenes:     { description: "Scenes JSON array", required: true, type: string }
       title:      { description: "Video title", required: true, type: string }
       theme:      { description: "Theme JSON", required: true, type: string }
-      audio_path: { description: "Repo path to WAV", required: true, type: string }
+      audio_path: { description: "Unused (voice is made here)", required: false, type: string, default: "" }
 
 permissions:
   contents: write
@@ -32,8 +32,16 @@ jobs:
             libxrandr2 libxkbcommon-dev libxfixes3 libxcomposite1 libxdamage1 \
             libatk-bridge2.0-0 libpango-1.0-0 libcairo2 libcups2 ffmpeg
 
-      - name: Install faster-whisper
-        run: pip install faster-whisper
+      - name: Install python tools
+        run: pip install faster-whisper edge-tts
+
+      - name: Make voiceover (free, edge-tts)
+        env:
+          SCRIPT_TEXT: ${{ inputs.script }}
+        run: |
+          printf '%s' "$SCRIPT_TEXT" > script.txt
+          edge-tts --voice en-US-AndrewNeural --file script.txt --write-media voice.mp3
+          ffmpeg -y -i voice.mp3 -ar 24000 -ac 1 voice.wav
 
       - name: Prepare props (whisper word timings + scene timing)
         env:
@@ -41,7 +49,7 @@ jobs:
           IN_SCENES: ${{ inputs.scenes }}
           IN_TITLE: ${{ inputs.title }}
           IN_THEME: ${{ inputs.theme }}
-          IN_AUDIO: ${{ inputs.audio_path }}
+          IN_AUDIO: voice.wav
         run: python scripts/prepare.py
 
       - name: Install Remotion
@@ -51,14 +59,11 @@ jobs:
         run: npx remotion render src/index.ts Short out/latest.mp4 --props=props.json --codec=h264 --concurrency=2
 
       - name: Commit result
-        env:
-          IN_AUDIO: ${{ inputs.audio_path }}
         run: |
           mkdir -p videos
           cp out/latest.mp4 videos/latest.mp4
           git config user.name "render-bot"
           git config user.email "render-bot@users.noreply.github.com"
-          git rm -f --ignore-unmatch "$IN_AUDIO" || true
           git add videos/latest.mp4
           git commit -m "Render video" || echo "nothing to commit"
           git pull --rebase || true
