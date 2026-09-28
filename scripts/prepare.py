@@ -154,6 +154,9 @@ def proportional_starts(scenes, total):
         starts.append(round(total * acc / tot, 3))
     return starts
 
+# whisper word timings are used for BOTH scene alignment and on-screen captions.
+caption_words = []
+
 def whisper_starts():
     from faster_whisper import WhisperModel
     model = WhisperModel("base.en", compute_type="int8")
@@ -164,6 +167,7 @@ def whisper_starts():
             words.append({"word": w.word.strip(), "start": float(w.start), "end": float(w.end)})
     if not words:
         raise RuntimeError("no words from whisper")
+    caption_words[:] = [w for w in words if w["word"]]
 
     def norm(t):
         return re.sub(r"[^a-z0-9]", "", (t or "").lower())
@@ -224,7 +228,7 @@ props = {
     "title": title,
     "theme": theme,
     "scenes": out_scenes,
-    "words": [],
+    "words": caption_words,
     "totalFrames": round(end_time * FPS),
     "hasMusic": os.path.exists("public/music.mp3"),
 }
