@@ -150,18 +150,64 @@ const Overlay: React.FC<{ s: Scene; t: Theme }> = ({ s, t }) => {
   }
 };
 
-export const Short: React.FC<ShortProps> = ({ theme, scenes, hasMusic }) => (
-  <AbsoluteFill style={{ background: theme.background }}>
-    {scenes.map((s, i) => (
-      <Sequence key={i} from={s.from} durationInFrames={s.duration}>
-        <Fade duration={s.duration}>
-          <MediaBG s={s} theme={theme} duration={s.duration} />
-          <Scrim />
-          <Overlay s={s} t={theme} />
-        </Fade>
-      </Sequence>
-    ))}
-    <Audio src={staticFile("voiceover.wav")} />
-    {hasMusic && <Audio src={staticFile("music.mp3")} volume={0.07} loop />}
-  </AbsoluteFill>
+// Compact, professional Like + Subscribe popup for the last ~3s. Sits low
+// on the screen (does not cover the frame) and animates in with a spring.
+const ThumbIcon: React.FC = () => (
+  <svg width="46" height="46" viewBox="0 0 24 24" fill="#ffffff" style={{ flexShrink: 0 }}>
+    <path d="M2 21h2V9H2v12zm20-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L13.17 1 6.59 7.59C6.22 7.95 6 8.45 6 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z" />
+  </svg>
 );
+
+const BellIcon: React.FC = () => (
+  <svg width="42" height="42" viewBox="0 0 24 24" fill="#ffffff" style={{ flexShrink: 0 }}>
+    <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5S10.5 3.17 10.5 4v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" />
+  </svg>
+);
+
+const EndCard: React.FC<{ t: Theme; total: number }> = ({ t, total }) => {
+  const { fps } = useVideoConfig();
+  const f = useCurrentFrame();
+  const showFor = Math.round(fps * 3);
+  const start = Math.max(0, total - showFor);
+  if (f < start) return null;
+  const local = f - start;
+  const p = spring({ frame: local, fps, config: { damping: 15, stiffness: 120 } });
+  const out = interpolate(f, [total - 8, total], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const like = spring({ frame: local - 6, fps, config: { damping: 10, stiffness: 160 } });
+  const sub = spring({ frame: local - 16, fps, config: { damping: 10, stiffness: 160 } });
+  const pulse = 1 + 0.03 * Math.sin(local / 5);
+  return (
+    <AbsoluteFill style={{ justifyContent: "flex-end", alignItems: "center", paddingBottom: 210, fontFamily: font, opacity: out, pointerEvents: "none" }}>
+      <div style={{ display: "flex", gap: 26, alignItems: "center", transform: `translateY(${(1 - p) * 90}px)`, opacity: p }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, background: "rgba(20,20,26,0.72)", backdropFilter: "blur(10px)", border: "2px solid rgba(255,255,255,0.16)", padding: "20px 34px", borderRadius: 999, boxShadow: "0 10px 40px rgba(0,0,0,0.5)", transform: `scale(${(0.7 + 0.3 * like) * pulse})` }}>
+          <ThumbIcon />
+          <span style={{ fontSize: 46, fontWeight: 800, color: "#fff", letterSpacing: 0.5 }}>Like</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, background: "#ff0033", padding: "20px 38px", borderRadius: 999, boxShadow: `0 10px 44px rgba(255,0,51,0.45)`, transform: `scale(${(0.7 + 0.3 * sub) * pulse})` }}>
+          <BellIcon />
+          <span style={{ fontSize: 46, fontWeight: 900, color: "#fff", letterSpacing: 0.5 }}>Subscribe</span>
+        </div>
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+export const Short: React.FC<ShortProps> = ({ theme, scenes, hasMusic }) => {
+  const { durationInFrames } = useVideoConfig();
+  return (
+    <AbsoluteFill style={{ background: theme.background }}>
+      {scenes.map((s, i) => (
+        <Sequence key={i} from={s.from} durationInFrames={s.duration}>
+          <Fade duration={s.duration}>
+            <MediaBG s={s} theme={theme} duration={s.duration} />
+            <Scrim />
+            <Overlay s={s} t={theme} />
+          </Fade>
+        </Sequence>
+      ))}
+      <EndCard t={theme} total={durationInFrames} />
+      <Audio src={staticFile("voiceover.wav")} />
+      {hasMusic && <Audio src={staticFile("music.mp3")} volume={0.07} loop />}
+    </AbsoluteFill>
+  );
+};
