@@ -1,101 +1,158 @@
-name: render-video
+name: Render Video
 
 on:
   workflow_dispatch:
     inputs:
-      script:     { description: "Voiceover text", required: true, type: string }
-      scenes:     { description: "Scenes JSON array", required: true, type: string }
-      title:      { description: "Video title", required: true, type: string }
-      theme:      { description: "Theme JSON", required: true, type: string }
-      audio_path: { description: "Unused (voice is made here)", required: false, type: string, default: "" }
+      script:
+        description: "Voice-over script"
+        required: true
+        type: string
+      scenes:
+        description: "Rich scene plan JSON"
+        required: true
+        type: string
+      title:
+        description: "Video title"
+        required: true
+        type: string
+      theme:
+        description: "Theme JSON"
+        required: true
+        type: string
+      language:
+        description: "Language: en or sv"
+        required: true
+        default: "en"
+        type: string
 
 permissions:
   contents: write
 
 jobs:
   render:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
 
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-      - name: System libs for Chromium
+      - name: Install system tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y libnss3 libdbus-1-3 libatk1.0-0 libgbm-dev libasound2 \
-            libxrandr2 libxkbcommon-dev libxfixes3 libxcomposite1 libxdamage1 \
-            libatk-bridge2.0-0 libpango-1.0-0 libcairo2 libcups2 ffmpeg
+          sudo apt-get install -y ffmpeg
 
-      - name: Install python tools
-        run: pip install faster-whisper edge-tts requests
+      - name: Install Node dependencies
+        run: npm install
 
-      - name: Make voiceover (free, edge-tts)
+      - name: Typecheck Remotion project
+        run: npm run typecheck
+
+      - name: Install Python dependencies
+        run: pip install edge-tts faster-whisper
+
+      - name: Prepare input files
         env:
           SCRIPT_TEXT: ${{ inputs.script }}
+          SCENES_JSON: ${{ inputs.scenes }}
+          VIDEO_TITLE: ${{ inputs.title }}
+          THEME_JSON: ${{ inputs.theme }}
+          LANGUAGE: ${{ inputs.language }}
         run: |
-          printf '%s' "$SCRIPT_TEXT" > script.txt
-          edge-tts --voice en-US-AndrewNeural --file script.txt --write-media voice.mp3
-          ffmpeg -y -i voice.mp3 -ar 24000 -ac 1 voice.wav
+          mkdir -p public
+          printf '%s' "$SCENES_JSON" > scenes.json
+          node -e 'JSON.parse(require("fs").readFileSync("scenes.json","utf8")); console.log("scenes.json valid")'
+          python - <<'PY'
+          import json, os
+          data=json.load(open("scenes.json"))
+          assert 5 <= len(data) <= 7, f"Expected 5-7 scenes, got {len(data)}"
+          allowed_actions={"idle","walk","run","jump","sleep","think","laugh","cry","point","hold","read","write","talk","look","react","celebrate","search","open","throw","catch","build","discover","panic","fall"}
+          allowed_cameras={"static","push","pull","panLeft","panRight","tilt","follow","whip"}
+          allowed_settings={"home","office","kitchen","street","school","gym","nature","city","bedroom","lab","space","workshop","abstract"}
+          total_words=0
+          for i,s in enumerate(data,1):
+              assert s.get("template") == "story", f"Scene {i}: template must be story"
+              narration=str(s.get("narration","")).strip()
+              wc=len(narration.split())
+              assert 12 <= wc <= 22, f"Scene {i}: narration must be 12-22 words, got {wc}"
+              total_words += wc
+              assert s.get("setting") in allowed_settings, f"Scene {i}: invalid setting"
+              chars=s.get("characters")
+              objs=s.get("objects")
+              beats=s.get("beats")
+              assert isinstance(chars,list) and len(chars)>=1, f"Scene {i}: no characters"
+              assert isinstance(objs,list) and len(objs)>=4, f"Scene {i}: need at least 4 objects"
+              assert isinstance(beats,list) and 6 <= len(beats) <= 9, f"Scene {i}: need 6-9 beats"
+              char_ids={str(c.get("id")) for c in chars}
+              obj_ids={str(o.get("id")) for o in objs}
+              last=-1
+              for j,b in enumerate(beats,1):
+                  assert b.get("actor") in char_ids, f"Scene {i} beat {j}: invalid actor"
+                  assert b.get("camera") in allowed_cameras, f"Scene {i} beat {j}: invalid camera"
+                  assert b.get("action") in allowed_actions, f"Scene {i} beat {j}: invalid action"
+                  start=float(b.get("start")); end=float(b.get("end"))
+                  assert 0 <= start < end <= 1, f"Scene {i} beat {j}: invalid timing"
+                  assert start >= last, f"Scene {i} beats not ordered"
+                  last=start
+                  refs=b.get("objects") or []
+                  assert refs and all(str(x) in obj_ids for x in refs), f"Scene {i} beat {j}: invalid object reference"
+          assert 90 <= total_words <= 120, f"Voiceover must be 90-120 words, got {total_words}"
+          print("Scene plan validation passed")
+          PY
 
-      - name: Prepare props (whisper word timings + scene timing)
+      - name: Generate AI voice
         env:
-          IN_SCRIPT: ${{ inputs.script }}
-          IN_SCENES: ${{ inputs.scenes }}
-          IN_TITLE: ${{ inputs.title }}
-          IN_THEME: ${{ inputs.theme }}
-          IN_AUDIO: voice.wav
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
-        run: python scripts/prepare.py
+          SCRIPT_TEXT: ${{ inputs.script }}
+          LANGUAGE: ${{ inputs.language }}
+        run: python scripts/make_voice.py
 
-      - name: Install Remotion
-        run: npm install --no-audit --no-fund
+      - name: Normalize voice audio
+        run: |
+          ffmpeg -y -i public/voiceover.mp3 -ac 1 -ar 48000 -c:a pcm_s16le public/voiceover.wav
+          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 public/voiceover.wav
 
-      - name: Render
-        run: npx remotion render src/index.ts Short out/latest.mp4 --props=props.json --codec=h264 --concurrency=2
+      - name: Create word-level captions
+        env:
+          LANGUAGE: ${{ inputs.language }}
+        run: |
+          python scripts/transcribe.py public/voiceover.wav words.json "$LANGUAGE"
 
-      - name: Commit result
+      - name: Build Remotion props
+        env:
+          VIDEO_TITLE: ${{ inputs.title }}
+          THEME_JSON: ${{ inputs.theme }}
+        run: node scripts/build_props.mjs
+
+      - name: Render Remotion video
+        run: npx remotion render src/index.tsx Short output.mp4 --props=props.json --codec=h264 --crf=18 --concurrency=2
+
+      - name: Verify final video
+        run: |
+          test -s output.mp4
+          ffprobe -v error -show_entries format=duration,size -of default=noprint_wrappers=1 output.mp4
+
+      - name: Save latest video
         run: |
           mkdir -p videos
-          cp out/latest.mp4 videos/latest.mp4
-          git config user.name "render-bot"
-          git config user.email "render-bot@users.noreply.github.com"
+          cp output.mp4 videos/latest.mp4
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add videos/latest.mp4
-          git commit -m "Render video" || echo "nothing to commit"
-          git pull --rebase || true
+          git commit -m "Render professional AI short" || echo "No changes to commit"
           git push
 
-      - name: Notify n8n callback
-        if: always()
-        env:
-          N8N_CALLBACK_URL: https://whatifworld.app.n8n.cloud/webhook/render-callback
-          IN_TITLE: ${{ inputs.title }}
-          IN_SCRIPT: ${{ inputs.script }}
-          JOB_STATUS: ${{ job.status }}
-          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          python - <<'PY'
-          import json, os, urllib.request
-          status = "success" if os.environ.get("JOB_STATUS") == "success" else "failure"
-          payload = json.dumps({
-              "status": status,
-              "title": os.environ.get("IN_TITLE", ""),
-              "voiceover": os.environ.get("IN_SCRIPT", ""),
-              "run_url": os.environ.get("RUN_URL", ""),
-          }).encode()
-          req = urllib.request.Request(
-              os.environ["N8N_CALLBACK_URL"],
-              data=payload,
-              headers={"Content-Type": "application/json"},
-          )
-          try:
-              with urllib.request.urlopen(req, timeout=30) as r:
-                  print("callback status", r.status)
-          except Exception as e:
-              print("callback failed:", e)
-          PY
+      - name: Upload render artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-short-video
+          path: output.mp4
