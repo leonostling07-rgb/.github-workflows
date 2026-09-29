@@ -43,7 +43,7 @@ jobs:
           edge-tts --voice en-US-AndrewNeural --file script.txt --write-media voice.mp3
           ffmpeg -y -i voice.mp3 -ar 24000 -ac 1 voice.wav
 
-      - name: Prepare props (fetch visuals + whisper scene timing)
+    - name: Prepare props (whisper word timings + scene timing)
         env:
           IN_SCRIPT: ${{ inputs.script }}
           IN_SCENES: ${{ inputs.scenes }}
