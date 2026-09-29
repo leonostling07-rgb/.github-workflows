@@ -333,12 +333,42 @@ const StarField: React.FC<{ frame: number }> = ({ frame }) => {
   return <g>{stars}</g>;
 };
 
-const Story: React.FC<{ s: Scene; t: Theme; duration: number }> = ({ s, t, duration }) => {
+// When the AI didn't set action/vehicle/destination, infer something sensible
+// from the scene's own text instead of always defaulting to "walk".
+const FALLBACK_ACTIONS: StoryAction[] = ["walk", "think", "climb", "celebrate", "search", "launch"];
+const FALLBACK_DESTS: StoryDestination[] = ["star", "lightbulb", "mountain", "flag", "city", "moon"];
+const inferStory = (s: Scene, sceneIndex: number) => {
+  const txt = (s.text || "").toLowerCase();
+  const has = (...words: string[]) => words.some((w) => txt.includes(w));
+  let action = s.action;
+  let vehicle = s.vehicle;
+  let destination = s.destination;
+  if (!action) {
+    if (has("rocket", "space", "launch", "moon", "astronaut", "mars")) action = "launch";
+    else if (has("climb", "mountain", "peak", "rise", "up the")) action = "climb";
+    else if (has("idea", "think", "realiz", "discover", "invent")) action = "think";
+    else if (has("win", "celebrat", "success", "achiev", "victory")) action = "celebrate";
+    else if (has("search", "look", "find", "explore", "hunt")) action = "search";
+    else if (has("walk", "went", "travel", "journey", "arrive")) action = "walk";
+    else action = FALLBACK_ACTIONS[sceneIndex % FALLBACK_ACTIONS.length];
+  }
+  if (!vehicle) vehicle = action === "launch" ? "rocket" : "none";
+  if (!destination) {
+    if (has("moon", "space", "mars")) destination = "moon";
+    else if (has("mountain", "peak", "climb")) destination = "mountain";
+    else if (has("city", "town", "downtown")) destination = "city";
+    else if (has("idea", "invent", "light")) destination = "lightbulb";
+    else if (has("win", "flag", "goal", "achiev")) destination = "flag";
+    else if (has("star", "dream", "wish", "famous")) destination = "star";
+    else destination = action === "walk" || action === "search" ? "none" : FALLBACK_DESTS[sceneIndex % FALLBACK_DESTS.length];
+  }
+  return { action, vehicle, destination };
+};
+
+const Story: React.FC<{ s: Scene; t: Theme; duration: number; sceneIndex: number }> = ({ s, t, duration, sceneIndex }) => {
   const f = useCurrentFrame();
   const p = Math.min(1, Math.max(0, f / Math.max(1, duration)));
-  const action = s.action || "walk";
-  const vehicle = s.vehicle || "none";
-  const destination = s.destination || "none";
+  const { action, vehicle, destination } = inferStory(s, sceneIndex);
   const destX = 800, destY = 420;
   const groundY = 1420;
   const caption = clean(s.text);
@@ -427,12 +457,12 @@ const Story: React.FC<{ s: Scene; t: Theme; duration: number }> = ({ s, t, durat
   );
 };
 
-const SceneView: React.FC<{ s: Scene; t: Theme }> = ({ s, t }) => {
+const SceneView: React.FC<{ s: Scene; t: Theme; sceneIndex: number }> = ({ s, t, sceneIndex }) => {
   switch (s.template) {
     case "bullet-reveal": return <Bullets s={s} t={t} />;
     case "big-number": return <BigNumber s={s} t={t} />;
     case "quote": return <Quote s={s} t={t} />;
-    case "story": return <Story s={s} t={t} duration={s.duration} />;
+    case "story": return <Story s={s} t={t} duration={s.duration} sceneIndex={sceneIndex} />;
     default: return <Title s={s} t={t} />;
   }
 };
@@ -449,7 +479,7 @@ const Captions: React.FC<{ words: Word[]; t: Theme }> = ({ words, t }) => {
   const activeInChunk = cur - chunkStart;
 
   return (
-    <AbsoluteFill style={{ justifyContent: "flex-end", alignItems: "center", paddingBottom: 300, fontFamily: font }}>
+    <AbsoluteFill style={{ justifyContent: "flex-end", alignItems: "center", paddingBottom: 230, fontFamily: font }}>
       <div style={{
         display: "flex", justifyContent: "center", background: "rgba(0,0,0,0.42)",
         backdropFilter: "blur(10px)", borderRadius: 26, padding: "22px 44px", maxWidth: 880,
@@ -494,7 +524,7 @@ export const Short: React.FC<ShortProps> = ({ theme, scenes, words, hasMusic, to
       <Background theme={theme} frame={frame} totalFrames={totalFrames} />
       {scenes.map((s, i) => (
         <Sequence key={i} from={s.from} durationInFrames={s.duration}>
-          <SceneWrap duration={s.duration}><SceneView s={s} t={theme} /></SceneWrap>
+          <SceneWrap duration={s.duration}><SceneView s={s} t={theme} sceneIndex={i} /></SceneWrap>
         </Sequence>
       ))}
       <Captions words={words} t={theme} />
