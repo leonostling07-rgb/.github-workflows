@@ -1,20 +1,17 @@
-import json, os, shutil, urllib.parse, re, signal, wave, contextlib
-import requests
+import json, os, shutil, re, signal, wave, contextlib
 
 FPS = 30
 audio_src = os.environ["IN_AUDIO"]
 scenes = json.loads(os.environ["IN_SCENES"])
 theme = json.loads(os.environ["IN_THEME"])
 title = os.environ["IN_TITLE"]
-PEXELS_KEY = os.environ.get("PEXELS_API_KEY", "").strip()
 
 os.makedirs("public", exist_ok=True)
 shutil.copy(audio_src, "public/voiceover.wav")
 
 # ---------------- hard deadlines so nothing can ever hang ----------------
-# Every network call and the whisper step run under a wall-clock alarm. If any
-# of them stalls, we abandon it and fall back, so the render always reaches the
-# Commit + Notify-callback steps (that is what sends the email).
+# The whisper step runs under a wall-clock alarm. If it stalls we abandon it and
+# fall back to proportional timing, so the render always reaches Commit + Notify.
 
 class Deadline(Exception):
     pass
@@ -37,119 +34,15 @@ def with_deadline(seconds, fn, *args, **kwargs):
     finally:
         signal.alarm(0)
 
-# ---------------- media fetching (free) ----------------
-# AI picks per scene: "stock" -> Pexels real photo/footage, "ai" -> Pollinations
-# generated art. Pexels needs a free key (repo secret PEXELS_API_KEY). If absent
-# or a lookup fails, we fall back to Pollinations. If that also fails, the scene
-# keeps no media and Remotion renders its animated gradient background instead.
-
-def get_json(url, headers=None):
-    r = requests.get(url, headers=headers or {}, timeout=(8, 20))
-    r.raise_for_status()
-    return r.json()
-
-def _download(url, path):
-    r = requests.get(url, timeout=(8, 45), stream=True)
-    r.raise_for_status()
-    with open(path, "wb") as f:
-        for chunk in r.iter_content(8192):
-            f.write(chunk)
-    return os.path.getsize(path) > 1500
-
-def download(url, path):
-    ok = with_deadline(60, _download, url, path)
-    if not ok and os.path.exists(path):
-        try:
-            os.remove(path)
-        except Exception:
-            pass
-    return bool(ok)
-
-def _pexels_photo(query):
-    if not PEXELS_KEY:
-        return None
-    q = urllib.parse.urlencode({"query": query, "orientation": "portrait", "per_page": 1, "size": "large"})
-    data = get_json("https://api.pexels.com/v1/search?" + q, {"Authorization": PEXELS_KEY})
-    photos = data.get("photos", [])
-    if not photos:
-        return None
-    src = photos[0]["src"]
-    return src.get("portrait") or src.get("large2x") or src.get("original")
-
-def _pexels_video(query):
-    if not PEXELS_KEY:
-        return None
-    q = urllib.parse.urlencode({"query": query, "orientation": "portrait", "per_page": 1, "size": "medium"})
-    data = get_json("https://api.pexels.com/videos/search?" + q, {"Authorization": PEXELS_KEY})
-    vids = data.get("videos", [])
-    if not vids:
-        return None
-    files = [f for f in vids[0].get("video_files", []) if f.get("file_type") == "video/mp4" and f.get("link")]
-    if not files:
-        return None
-    files.sort(key=lambda f: abs(1920 - (f.get("height") or 0)))
-    return files[0]["link"]
-
-def pexels_photo(query):
-    return with_deadline(25, _pexels_photo, query)
-
-def pexels_video(query):
-    return with_deadline(25, _pexels_video, query)
-
-def pollinations_url(prompt, model="flux"):
-    # "flux" looks noticeably sharper/cleaner than "turbo"; we try flux first and
-    # fall back to turbo (faster, less likely to stall) if flux fails or times out.
-    seed = abs(hash(prompt)) % 100000
-    params = urllib.parse.urlencode({"width": 1080, "height": 1920, "nologo": "true", "seed": seed, "model": model})
-    return "https://image.pollinations.ai/prompt/" + urllib.parse.quote(prompt[:400]) + "?" + params
-
+# ---------------- visuals ----------------
+# The visual look is 100% local and can never be blank: every scene renders an
+# animated gradient background (theme colours) with the scene's moving emoji /
+# icon objects on top. No external image service is used, so there is nothing to
+# fail, time out, come back blurry, or leave a scene empty.
 for i, s in enumerate(scenes):
-    vis = s.get("visual") or {}
-    source = (vis.get("source") or "ai").lower()
-    media_pref = (vis.get("media") or "image").lower()
-    query = (vis.get("query") or s.get("text") or title or "abstract").strip()
-    ai_prompt = (vis.get("ai_prompt") or query).strip()
-    media_file = None
-    media_type = None
-
-    if source == "stock":
-        if media_pref == "video":
-            link = pexels_video(query)
-            if link and download(link, f"public/media_{i}.mp4"):
-                media_file, media_type = f"media_{i}.mp4", "video"
-        if not media_file:
-            link = pexels_photo(query)
-            if link and download(link, f"public/media_{i}.jpg"):
-                media_file, media_type = f"media_{i}.jpg", "image"
-
-    if not media_file:  # ai source, or stock fell through
-        # Try flux (sharp) first, then turbo (fast) as a fallback, so a single slow
-        # or failed request never leaves the scene without a picture.
-        for model in ("flux", "turbo"):
-            if download(pollinations_url(ai_prompt, model), f"public/media_{i}.jpg"):
-                media_file, media_type = f"media_{i}.jpg", "image"
-                break
-
-    s["media_file"] = media_file
-    s["media_type"] = media_type
-    print(f"scene {i}: source={source} pref={media_pref} -> {media_file} ({media_type})")
-
-# ---------------- guarantee every scene has a picture (no more blank scenes) ----------------
-# If any scene still has no image (all fetches failed/timed out), reuse the nearest
-# earlier scene's image so the video is never blank. As a last resort, copy the
-# first available image to any leading scenes that are still empty.
-last_good = None
-for i, s in enumerate(scenes):
-    if s.get("media_file"):
-        last_good = s["media_file"]
-    elif last_good:
-        s["media_file"], s["media_type"] = last_good, "image"
-        print(f"scene {i}: reused earlier image {last_good}")
-first_good = next((s["media_file"] for s in scenes if s.get("media_file")), None)
-if first_good:
-    for s in scenes:
-        if not s.get("media_file"):
-            s["media_file"], s["media_type"] = first_good, "image"
+    s["media_file"] = None
+    s["media_type"] = None
+    print(f"scene {i}: gradient + {len(s.get('objects') or [])} objects")
 
 # ---------------- audio length (stdlib, never hangs) ----------------
 def wav_duration(path):
