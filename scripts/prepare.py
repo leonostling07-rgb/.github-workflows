@@ -1,4 +1,5 @@
-import json, os, shutil, re, signal, wave, contextlib
+import json, os, shutil
+from faster_whisper import WhisperModel
 
 FPS = 30
 audio_src = os.environ["IN_AUDIO"]
@@ -9,125 +10,21 @@ title = os.environ["IN_TITLE"]
 os.makedirs("public", exist_ok=True)
 shutil.copy(audio_src, "public/voiceover.wav")
 
-# ---------------- hard deadlines so nothing can ever hang ----------------
-# The whisper step runs under a wall-clock alarm. If it stalls we abandon it and
-# fall back to proportional timing, so the render always reaches Commit + Notify.
+model = WhisperModel("base.en", compute_type="int8")
+segments, info = model.transcribe("public/voiceover.wav", word_timestamps=True, language="en")
+words = []
+for seg in segments:
+    for w in seg.words:
+        words.append({"word": w.word.strip(), "start": w.start, "end": w.end})
+audio_len = info.duration
 
-class Deadline(Exception):
-    pass
-
-def _on_alarm(signum, frame):
-    raise Deadline()
-
-signal.signal(signal.SIGALRM, _on_alarm)
-
-def with_deadline(seconds, fn, *args, **kwargs):
-    signal.alarm(int(seconds))
-    try:
-        return fn(*args, **kwargs)
-    except Deadline:
-        print(f"deadline({seconds}s) hit for {getattr(fn,'__name__',fn)}")
-        return None
-    except Exception as e:
-        print("op failed:", getattr(fn, "__name__", fn), repr(e)[:160])
-        return None
-    finally:
-        signal.alarm(0)
-
-# ---------------- visuals ----------------
-# The visual look is 100% local and can never be blank: every scene renders an
-# animated gradient background (theme colours) with the scene's moving emoji /
-# icon objects on top. No external image service is used, so there is nothing to
-# fail, time out, come back blurry, or leave a scene empty.
-for i, s in enumerate(scenes):
-    s["media_file"] = None
-    s["media_type"] = None
-    print(f"scene {i}: gradient + {len(s.get('objects') or [])} objects")
-
-# ---------------- audio length (stdlib, never hangs) ----------------
-def wav_duration(path):
-    try:
-        with contextlib.closing(wave.open(path, "r")) as w:
-            return w.getnframes() / float(w.getframerate())
-    except Exception as e:
-        print("wav duration err:", e)
-        return None
-
-audio_len = wav_duration("public/voiceover.wav") or 30.0
-
-# ---------------- scene timing ----------------
-# Preferred: whisper aligns each scene to when its narration is actually spoken.
-# If whisper is slow to load/transcribe or errors, we fall back to a proportional
-# split by narration word count so the render is never blocked.
-
-def proportional_starts(scenes, total):
-    counts = [max(1, len((s.get("narration") or s.get("text") or "").split())) for s in scenes]
-    tot = sum(counts) or 1
-    starts, acc = [0.0], 0
-    for c in counts[:-1]:
-        acc += c
-        starts.append(round(total * acc / tot, 3))
-    return starts
-
-# whisper word timings are used for BOTH scene alignment and on-screen captions.
-caption_words = []
-
-def whisper_starts():
-    from faster_whisper import WhisperModel
-    model = WhisperModel("base.en", compute_type="int8")
-    segments, info = model.transcribe("public/voiceover.wav", word_timestamps=True, language="en")
-    words = []
-    for seg in segments:
-        for w in seg.words:
-            words.append({"word": w.word.strip(), "start": float(w.start), "end": float(w.end)})
-    if not words:
-        raise RuntimeError("no words from whisper")
-    caption_words[:] = [w for w in words if w["word"]]
-
-    def norm(t):
-        return re.sub(r"[^a-z0-9]", "", (t or "").lower())
-
-    norm_words = [norm(w["word"]) for w in words]
-
-    def find_start_time(narration, search_from_idx):
-        toks = [norm(t) for t in (narration or "").split() if norm(t)]
-        if not toks:
-            idx = min(search_from_idx, len(words) - 1)
-            return words[idx]["start"], search_from_idx
-        anchor = toks[: min(4, len(toks))]
-        best_idx = None
-        for j in range(search_from_idx, len(norm_words)):
-            if norm_words[j] == anchor[0]:
-                ok = all(j + k < len(norm_words) and norm_words[j + k] == anchor[k] for k in range(1, len(anchor)))
-                if ok:
-                    best_idx = j
-                    break
-        if best_idx is None:
-            for j in range(search_from_idx, len(norm_words)):
-                if norm_words[j] == anchor[0]:
-                    best_idx = j
-                    break
-        if best_idx is None:
-            return words[min(search_from_idx, len(words) - 1)]["start"], search_from_idx
-        return words[best_idx]["start"], best_idx + len(toks)
-
-    starts, cursor = [], 0
-    for i, s in enumerate(scenes):
-        if i == 0:
-            starts.append(0.0)
-            _, cursor = find_start_time(s.get("narration") or s.get("text"), 0)
-            continue
-        t0, cursor = find_start_time(s.get("narration") or s.get("text"), cursor)
-        if starts and t0 < starts[-1] + 0.3:
-            t0 = starts[-1] + 0.3
-        starts.append(t0)
-    return starts
-
-starts = with_deadline(240, whisper_starts)
-if not starts or len(starts) != len(scenes):
-    print("whisper unavailable or mismatched -> proportional timing")
-    starts = proportional_starts(scenes, audio_len)
-
+counts = [max(1, len((s.get("narration") or s.get("text") or "").split())) for s in scenes]
+total = sum(counts)
+starts, cum = [], 0
+for c in counts:
+    idx = min(len(words) - 1, round(cum / total * len(words))) if words else 0
+    starts.append(0.0 if cum == 0 or not words else words[idx]["start"])
+    cum += c
 end_time = audio_len + 0.6
 
 out_scenes = []
@@ -143,11 +40,9 @@ props = {
     "title": title,
     "theme": theme,
     "scenes": out_scenes,
-    "words": caption_words,
+    "words": [{"word": w["word"], "start": round(w["start"] * FPS), "end": round(w["end"] * FPS)} for w in words],
     "totalFrames": round(end_time * FPS),
     "hasMusic": os.path.exists("public/music.mp3"),
 }
 json.dump(props, open("props.json", "w"), indent=2)
-print("frames:", props["totalFrames"], "scenes:", len(out_scenes))
-for i, s in enumerate(out_scenes):
-    print(f"  scene {i}: from={s['from']} dur={s['duration']} :: {(s.get('narration') or s.get('text') or '')[:50]}")
+print("frames:", props["totalFrames"], "scenes:", len(out_scenes), "words:", len(words))
