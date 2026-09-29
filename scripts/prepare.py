@@ -45,4 +45,6 @@ props = {
     "hasMusic": os.path.exists("public/music.mp3"),
 }
 json.dump(props, open("props.json", "w"), indent=2)
+for s in out_scenes:
+    print("SCENE:", s.get("template"), "| action:", s.get("action"), "| text:", (s.get("text") or "")[:40])
 print("frames:", props["totalFrames"], "scenes:", len(out_scenes), "words:", len(words))
