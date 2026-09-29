@@ -1,10 +1,10 @@
-name: Render Video
+name: Render AI Cartoon Video
 
 on:
   workflow_dispatch:
     inputs:
       script:
-        description: "Voice-over script"
+        description: "Full voice-over script"
         required: true
         type: string
       scenes:
@@ -13,16 +13,13 @@ on:
         type: string
       title:
         description: "Video title"
-        required: true
+        required: false
+        default: "AI Cartoon Video"
         type: string
       theme:
         description: "Theme JSON"
-        required: true
-        type: string
-      language:
-        description: "Language: en or sv"
-        required: true
-        default: "en"
+        required: false
+        default: '{"background":"#111827","accent":"#7c3aed","text":"#ffffff"}'
         type: string
 
 permissions:
@@ -32,127 +29,396 @@ jobs:
   render:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
 
       - name: Install system tools
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
+          ffmpeg -version
+          node --version
+          python3 --version
 
-      - name: Install Node dependencies
-        run: npm install
-
-      - name: Typecheck Remotion project
-        run: npm run typecheck
-
-      - name: Install Python dependencies
-        run: pip install edge-tts faster-whisper
-
-      - name: Prepare input files
+      - name: Create self-contained Remotion project
+        shell: bash
         env:
           SCRIPT_TEXT: ${{ inputs.script }}
           SCENES_JSON: ${{ inputs.scenes }}
           VIDEO_TITLE: ${{ inputs.title }}
           THEME_JSON: ${{ inputs.theme }}
-          LANGUAGE: ${{ inputs.language }}
         run: |
-          mkdir -p public
+          set -euo pipefail
+          rm -rf ai-video
+          mkdir -p ai-video/src
+          cd ai-video
+
+          cat > package.json <<'EOF'
+          {
+            "private": true,
+            "scripts": {
+              "render": "remotion render src/index.jsx Main out.mp4 --props=props.json",
+              "typecheck": "esbuild src/index.jsx src/Video.jsx --bundle --format=esm --outdir=.syntax-check --external:react --external:react-dom --external:remotion"
+            },
+            "dependencies": {
+              "@remotion/cli": "4.0.529",
+              "react": "18.3.1",
+              "react-dom": "18.3.1",
+              "remotion": "4.0.529",
+              "esbuild": "0.25.9"
+            }
+          }
+          EOF
+
+          cat > src/index.jsx <<'EOF'
+          import React from "react";
+          import { registerRoot, Composition } from "remotion";
+          import { Video } from "./Video.jsx";
+
+          export const RemotionRoot = () => (
+            <Composition
+              id="Main"
+              component={Video}
+              durationInFrames={30 * 34}
+              fps={30}
+              calculateMetadata={({ props }) => ({
+                durationInFrames: Math.max(1, Math.ceil((props.scenes || []).reduce((sum, s) => sum + (Number(s.duration) || 4), 0) * 30))
+              })}
+              width={1080}
+              height={1920}
+              defaultProps={{ scenes: [], captions: [], theme: {} }}
+            />
+          );
+
+          registerRoot(RemotionRoot);
+          EOF
+
+          cat > src/Video.jsx <<'EOF'
+          import React, { useMemo } from "react";
+          import {
+            AbsoluteFill,
+            Audio,
+            staticFile,
+            interpolate,
+            spring,
+            useCurrentFrame,
+            useVideoConfig
+          } from "remotion";
+
+          const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+          const hash = (s) => {
+            let h = 2166136261;
+            for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+            return Math.abs(h >>> 0);
+          };
+
+          const EMOJI = {
+            person: "🧑", phone: "📱", laptop: "💻", coffee: "☕", clock: "⏰",
+            book: "📖", money: "💰", brain: "🧠", heart: "❤️", star: "⭐",
+            lightbulb: "💡", rocket: "🚀", moon: "🌙", mountain: "⛰️",
+            city: "🏙️", car: "🚗", house: "🏠", tree: "🌳", cloud: "☁️",
+            fire: "🔥", trophy: "🏆", magnify: "🔎", chart: "📈", warning: "⚠️",
+            globe: "🌍", food: "🍎", bed: "🛏️", school: "🏫", dumbbell: "🏋️",
+            water: "💧", fish: "🐟", whale: "🐋", lock: "🔒", key: "🔑"
+          };
+
+          const objectEmoji = (o) => {
+            if (o.emoji) return o.emoji;
+            const k = String(o.id || o.type || "").toLowerCase();
+            return EMOJI[k] || "●";
+          };
+
+          function Background({ theme, sceneIndex }) {
+            const bg = theme.background || "#111827";
+            const accent = theme.accent || "#7c3aed";
+            const frame = useCurrentFrame();
+            const drift = Math.sin(frame / 55 + sceneIndex) * 18;
+            return (
+              <AbsoluteFill style={{
+                background: `radial-gradient(circle at ${35 + drift / 10}% 20%, ${accent}44, transparent 35%), ${bg}`,
+                overflow: "hidden"
+              }}>
+                <div style={{
+                  position:"absolute", width:700, height:700, borderRadius:"50%",
+                  background: accent, opacity:.07, filter:"blur(8px)",
+                  left:-240 + drift, top:180
+                }}/>
+                <div style={{
+                  position:"absolute", width:520, height:520, borderRadius:"50%",
+                  border:`2px solid ${accent}22`, right:-180, bottom:300
+                }}/>
+              </AbsoluteFill>
+            );
+          }
+
+          function CartoonObject({ object, index, sceneKey, startFrame, endFrame }) {
+            const frame = useCurrentFrame();
+            const total = Math.max(1, endFrame - startFrame);
+            const local = clamp((frame - startFrame) / total, 0, 1);
+            const seed = hash(`${sceneKey}-${index}-${objectEmoji(object)}`);
+            const from = Array.isArray(object.from) ? object.from : [50, 50];
+            const to = Array.isArray(object.to) ? object.to : from;
+            const x = interpolate(local, [0,1], [from[0], to[0]]);
+            const y = interpolate(local, [0,1], [from[1], to[1]]);
+            const entrance = spring({ frame: Math.max(0, frame - startFrame - (object.delay || 0)), fps:30, config:{damping:16, stiffness:140, mass:.7} });
+            const wobble = Math.sin((frame + seed % 90) / 9) * 2.2;
+            const scale = interpolate(clamp(entrance,0,1), [0,1], [.65,1]);
+            const size = clamp(Number(object.size) || 170, 90, 280);
+            const rotation = interpolate(local, [0,1], [0, Number(object.spin)||0]) + wobble;
+            const opacity = interpolate(clamp(entrance,0,1), [0,1], [0,1]);
+
+            return (
+              <div style={{
+                position:"absolute",
+                left:`${x}%`, top:`${y}%`,
+                transform:`translate(-50%,-50%) rotate(${rotation}deg) scale(${scale})`,
+                opacity,
+                fontSize:size,
+                lineHeight:1,
+                filter:"drop-shadow(0 14px 12px rgba(0,0,0,.22))",
+                zIndex:20 + index
+              }}>
+                {objectEmoji(object)}
+              </div>
+            );
+          }
+
+          function CartoonCharacter({ character, index, sceneIndex, startFrame, endFrame }) {
+            const frame = useCurrentFrame();
+            const seed = hash(`${sceneIndex}-${index}-${character.role || "character"}`);
+            const p = clamp((frame-startFrame)/Math.max(1,endFrame-startFrame),0,1);
+            const x = 22 + ((seed % 55) + p * ((seed % 2 ? 18 : -18)));
+            const y = 54 + Math.sin(frame/14 + index) * 2;
+            const skin = ["#F6C7A5","#E8A87C","#D69B73"][seed%3];
+            return (
+              <div style={{
+                position:"absolute", left:`${x}%`, top:`${y}%`,
+                transform:"translate(-50%,-50%)",
+                zIndex:30 + index
+              }}>
+                <div style={{
+                  width:116,height:116,borderRadius:"50%",background:skin,
+                  border:"6px solid #111827",boxSizing:"border-box",
+                  display:"flex",alignItems:"center",justifyContent:"center",
+                  fontSize:66,boxShadow:"0 18px 30px rgba(0,0,0,.25)"
+                }}>🙂</div>
+                <div style={{
+                  width:145,height:175,borderRadius:"42% 42% 28% 28%",
+                  background:["#5B21B6","#0F766E","#B45309","#1D4ED8"][seed%4],
+                  border:"6px solid #111827",margin:"-5px auto 0",
+                  boxShadow:"0 18px 30px rgba(0,0,0,.22)"
+                }}/>
+              </div>
+            );
+          }
+
+          function Beat({ beat, index, sceneStart, sceneEnd, sceneKey }) {
+            const frame = useCurrentFrame();
+            const start = sceneStart + Math.round((Number(beat.start) || index * 0.8) * 30);
+            const end = sceneStart + Math.round((Number(beat.end) || (index+1) * 0.8) * 30);
+            const active = frame >= start && frame <= end;
+            const progress = clamp((frame-start)/Math.max(1,end-start),0,1);
+            if (!active && frame < start) return null;
+            const scale = spring({frame:Math.max(0,frame-start),fps:30,config:{damping:13,stiffness:170}});
+            const label = beat.label || beat.event || "";
+            if (!label) return null;
+            return (
+              <div style={{
+                position:"absolute",left:"50%",top:"18%",
+                transform:`translate(-50%,-50%) scale(${clamp(scale,0,1)})`,
+                opacity:active ? 1 : .15,zIndex:80,
+                maxWidth:"86%",textAlign:"center",
+                fontFamily:"Arial, sans-serif",fontWeight:900,
+                fontSize:58,color:"#fff",
+                textShadow:"0 5px 18px rgba(0,0,0,.35)",
+                letterSpacing:-1
+              }}>
+                {label}
+              </div>
+            );
+          }
+
+          function Scene({ scene, index, startFrame, endFrame, theme }) {
+            const frame = useCurrentFrame();
+            const sceneKey = `${index}-${scene.id || scene.narration || ""}`;
+            const camera = scene.camera || "stable";
+            const progress = clamp((frame-startFrame)/Math.max(1,endFrame-startFrame),0,1);
+            const zoom = camera === "push" ? interpolate(progress,[0,1],[1,1.08]) :
+                         camera === "pull" ? interpolate(progress,[0,1],[1.08,1]) : 1;
+            const characters = Array.isArray(scene.characters) ? scene.characters : [];
+            const objects = Array.isArray(scene.objects) ? scene.objects : [];
+            const beats = Array.isArray(scene.beats) ? scene.beats : [];
+            return (
+              <AbsoluteFill>
+                <Background theme={theme} sceneIndex={index}/>
+                <AbsoluteFill style={{transform:`scale(${zoom})`}}>
+                  {objects.slice(0,14).map((o,i)=>
+                    <CartoonObject key={i} object={o} index={i} sceneKey={sceneKey} startFrame={startFrame} endFrame={endFrame}/>
+                  )}
+                  {characters.slice(0,5).map((c,i)=>
+                    <CartoonCharacter key={i} character={c} index={i} sceneIndex={index} startFrame={startFrame} endFrame={endFrame}/>
+                  )}
+                  {beats.slice(0,10).map((b,i)=>
+                    <Beat key={i} beat={b} index={i} sceneStart={startFrame} sceneEnd={endFrame} sceneKey={sceneKey}/>
+                  )}
+                  {scene.text ? (
+                    <div style={{
+                      position:"absolute",left:"8%",right:"8%",bottom:"24%",
+                      textAlign:"center",fontFamily:"Arial,sans-serif",
+                      fontWeight:900,fontSize:52,color:theme.text||"#fff",
+                      zIndex:100,textShadow:"0 5px 18px rgba(0,0,0,.4)"
+                    }}>{scene.text}</div>
+                  ) : null}
+                </AbsoluteFill>
+              </AbsoluteFill>
+            );
+          }
+
+          function Captions({ captions }) {
+            const frame = useCurrentFrame();
+            const t = frame / 30;
+            const current = captions.find(c => t >= c.start && t <= c.end);
+            if (!current) return null;
+            return (
+              <div style={{
+                position:"absolute",left:"6%",right:"6%",bottom:"7%",
+                display:"flex",justifyContent:"center",zIndex:300,
+                fontFamily:"Arial,sans-serif",fontWeight:900
+              }}>
+                <div style={{
+                  background:"rgba(0,0,0,.78)",padding:"14px 22px",
+                  borderRadius:22,color:"#fff",fontSize:45,
+                  lineHeight:1.08,textAlign:"center",
+                  boxShadow:"0 10px 30px rgba(0,0,0,.28)"
+                }}>
+                  {current.word}
+                </div>
+              </div>
+            );
+          }
+
+          export function Video({ scenes, captions, theme, audio }) {
+            const { fps } = useVideoConfig();
+            const frame = useCurrentFrame();
+            const safeScenes = Array.isArray(scenes) && scenes.length ? scenes : [{
+              text:"No scene data", objects:[{emoji:"💡",from:[50,50],to:[50,45],size:190}]
+            }];
+            const durations = safeScenes.map(s => Math.max(1, Math.round((Number(s.duration)||4)*fps)));
+            const total = durations.reduce((a,b)=>a+b,0);
+            let cursor = 0;
+            const sceneIndex = durations.findIndex(d => frame >= cursor && frame < (cursor += d));
+            const idx = sceneIndex < 0 ? safeScenes.length-1 : sceneIndex;
+            let start = durations.slice(0,idx).reduce((a,b)=>a+b,0);
+            let end = start + durations[idx];
+            return (
+              <AbsoluteFill>
+                <Scene scene={safeScenes[idx]} index={idx} startFrame={start} endFrame={end} theme={theme||{}}/>
+                <Captions captions={captions||[]}/>
+                {audio ? <Audio src={staticFile(audio)}/> : null}
+              </AbsoluteFill>
+            );
+          }
+          EOF
+
+          printf '%s' "$SCRIPT_TEXT" > script.txt
           printf '%s' "$SCENES_JSON" > scenes.json
-          node -e 'JSON.parse(require("fs").readFileSync("scenes.json","utf8")); console.log("scenes.json valid")'
-          python - <<'PY'
-          import json, os
-          data=json.load(open("scenes.json"))
-          assert 5 <= len(data) <= 7, f"Expected 5-7 scenes, got {len(data)}"
-          allowed_actions={"idle","walk","run","jump","sleep","think","laugh","cry","point","hold","read","write","talk","look","react","celebrate","search","open","throw","catch","build","discover","panic","fall"}
-          allowed_cameras={"static","push","pull","panLeft","panRight","tilt","follow","whip"}
-          allowed_settings={"home","office","kitchen","street","school","gym","nature","city","bedroom","lab","space","workshop","abstract"}
-          total_words=0
-          for i,s in enumerate(data,1):
-              assert s.get("template") == "story", f"Scene {i}: template must be story"
-              narration=str(s.get("narration","")).strip()
-              wc=len(narration.split())
-              assert 12 <= wc <= 22, f"Scene {i}: narration must be 12-22 words, got {wc}"
-              total_words += wc
-              assert s.get("setting") in allowed_settings, f"Scene {i}: invalid setting"
-              chars=s.get("characters")
-              objs=s.get("objects")
-              beats=s.get("beats")
-              assert isinstance(chars,list) and len(chars)>=1, f"Scene {i}: no characters"
-              assert isinstance(objs,list) and len(objs)>=4, f"Scene {i}: need at least 4 objects"
-              assert isinstance(beats,list) and 6 <= len(beats) <= 9, f"Scene {i}: need 6-9 beats"
-              char_ids={str(c.get("id")) for c in chars}
-              obj_ids={str(o.get("id")) for o in objs}
-              last=-1
-              for j,b in enumerate(beats,1):
-                  assert b.get("actor") in char_ids, f"Scene {i} beat {j}: invalid actor"
-                  assert b.get("camera") in allowed_cameras, f"Scene {i} beat {j}: invalid camera"
-                  assert b.get("action") in allowed_actions, f"Scene {i} beat {j}: invalid action"
-                  start=float(b.get("start")); end=float(b.get("end"))
-                  assert 0 <= start < end <= 1, f"Scene {i} beat {j}: invalid timing"
-                  assert start >= last, f"Scene {i} beats not ordered"
-                  last=start
-                  refs=b.get("objects") or []
-                  assert refs and all(str(x) in obj_ids for x in refs), f"Scene {i} beat {j}: invalid object reference"
-          assert 90 <= total_words <= 120, f"Voiceover must be 90-120 words, got {total_words}"
-          print("Scene plan validation passed")
+          printf '%s' "$VIDEO_TITLE" > title.txt
+          printf '%s' "$THEME_JSON" > theme.json
+
+          python3 - <<'PY'
+          import json, re, pathlib
+          p=pathlib.Path(".")
+          raw=json.loads(p.joinpath("scenes.json").read_text())
+          if isinstance(raw, dict) and "scenes" in raw: raw=raw["scenes"]
+          if not isinstance(raw,list): raise SystemExit("scenes must be an array")
+          if not (5 <= len(raw) <= 7): raise SystemExit(f"Expected 5-7 scenes, got {len(raw)}")
+          script=p.joinpath("script.txt").read_text().strip()
+          words=re.findall(r"\S+",script)
+          if not (90 <= len(words) <= 120): raise SystemExit(f"Expected 90-120 voiceover words, got {len(words)}")
+          total=34.0
+          per=total/len(raw)
+          out=[]
+          for i,s in enumerate(raw):
+              if not isinstance(s,dict): raise SystemExit(f"Scene {i+1} is not an object")
+              x=dict(s)
+              x["duration"]=float(x.get("duration") or per)
+              if x["duration"] < 2.5 or x["duration"] > 8.0: x["duration"]=per
+              if not isinstance(x.get("objects"),list): x["objects"]=[]
+              x["objects"]=x["objects"][:14]
+              if not x["objects"]:
+                  x["objects"]=[{"emoji":"💡","from":[50,55],"to":[58,48],"size":180}]
+              if not isinstance(x.get("characters"),list): x["characters"]=[]
+              if not isinstance(x.get("beats"),list):
+                  x["beats"]=[]
+              x["beats"]=x["beats"][:10]
+              out.append(x)
+          theme=json.loads(p.joinpath("theme.json").read_text() or "{}")
+          if not isinstance(theme,dict): theme={}
+          props={"title":p.joinpath("title.txt").read_text().strip(),"script":script,"scenes":out,"theme":theme,"captions":[]}
+          p.joinpath("props.json").write_text(json.dumps(props))
+          print("Storyboard validation OK:",len(out),"scenes",len(words),"words")
           PY
 
-      - name: Generate AI voice
+          npm install --no-audit --no-fund
+          npm run typecheck
+
+      - name: Generate voice and captions
+        shell: bash
         env:
           SCRIPT_TEXT: ${{ inputs.script }}
-          LANGUAGE: ${{ inputs.language }}
-        run: python scripts/make_voice.py
-
-      - name: Normalize voice audio
         run: |
-          ffmpeg -y -i public/voiceover.mp3 -ac 1 -ar 48000 -c:a pcm_s16le public/voiceover.wav
-          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 public/voiceover.wav
-
-      - name: Create word-level captions
-        env:
-          LANGUAGE: ${{ inputs.language }}
-        run: |
-          python scripts/transcribe.py public/voiceover.wav words.json "$LANGUAGE"
-
-      - name: Build Remotion props
-        env:
-          VIDEO_TITLE: ${{ inputs.title }}
-          THEME_JSON: ${{ inputs.theme }}
-        run: node scripts/build_props.mjs
+          set -euo pipefail
+          cd ai-video
+          python3 -m venv .venv
+          . .venv/bin/activate
+          pip install --disable-pip-version-check -q edge-tts faster-whisper
+          python - <<'PY'
+          import asyncio, os
+          import edge_tts
+          text=os.environ["SCRIPT_TEXT"]
+          async def main():
+              c=edge_tts.Communicate(text, "en-US-AriaNeural", rate="+8%", pitch="+0Hz")
+              await c.save("voice.mp3")
+          asyncio.run(main())
+          PY
+          mkdir -p public
+          cp voice.mp3 public/voice.mp3
+          python - <<'PY'
+          from faster_whisper import WhisperModel
+          model=WhisperModel("tiny.en", device="cpu", compute_type="int8")
+          segments,_=model.transcribe("voice.mp3", word_timestamps=True, vad_filter=True)
+          words=[]
+          for seg in segments:
+              for w in (seg.words or []):
+                  words.append({"word":w.word.strip(),"start":float(w.start),"end":float(w.end)})
+          import json
+          json.dump(words,open("captions.json","w"),ensure_ascii=False)
+          print("Caption words:",len(words))
+          PY
+          python - <<'PY'
+          import json
+          p=json.load(open("props.json"))
+          c=json.load(open("captions.json"))
+          p["captions"]=c
+          p["audio"]="voice.mp3"
+          json.dump(p,open("props.json","w"))
+          PY
 
       - name: Render Remotion video
-        run: npx remotion render src/index.tsx Short output.mp4 --props=props.json --codec=h264 --crf=18 --concurrency=2
-
-      - name: Verify final video
         run: |
-          test -s output.mp4
-          ffprobe -v error -show_entries format=duration,size -of default=noprint_wrappers=1 output.mp4
+          set -euo pipefail
+          cd ai-video
+          npm run render
+          test -s out.mp4
+          ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 out.mp4
+          ffprobe -v error -show_entries format=duration -of csv=p=0 out.mp4
 
-      - name: Save latest video
-        run: |
-          mkdir -p videos
-          cp output.mp4 videos/latest.mp4
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add videos/latest.mp4
-          git commit -m "Render professional AI short" || echo "No changes to commit"
-          git push
-
-      - name: Upload render artifact
+      - name: Publish video artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ai-short-video
-          path: output.mp4
+          name: ai-cartoon-video
+          path: ai-video/out.mp4
+          if-no-files-found: error
+
