@@ -113,773 +113,607 @@ jobs:
             AbsoluteFill,
             Audio,
             interpolate,
-            Sequence,
             staticFile,
             useCurrentFrame,
-            useVideoConfig,
           } from "remotion";
 
           const W = 1080;
           const H = 1920;
+          const FPS = 30;
 
-          const PALETTE = {
+          const C = {
             ink: "#172033",
             skin: "#F2B38D",
-            skin2: "#D99068",
-            shirt: "#4E6BE8",
-            shirt2: "#344BB8",
-            pants: "#24314D",
             hair: "#2A1C20",
             white: "#FFFFFF",
-            paper: "#F7F3EA",
-            yellow: "#FFD75A",
-            orange: "#F18B54",
-            green: "#63B98B",
-            blue: "#69A9E8",
-            red: "#E76565",
-            purple: "#8D76D9",
-            grey: "#AAB3C1",
-            darkGrey: "#667085",
-            bg: "#EAF0F7",
+            navy: "#27324A",
+            blue: "#4E6BE8",
+            blue2: "#79B6E8",
+            green: "#65A77D",
+            yellow: "#FFD35A",
+            orange: "#E97A5F",
+            red: "#D85E5E",
+            purple: "#8C72D8",
+            paper: "#F8F4EA",
+            grey: "#8B95A5",
           };
 
           const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+          const lerp = (a, b, t) => a + (b - a) * t;
+          const ease = (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
-          function hash(str = "") {
+          function hash(s = "") {
             let h = 2166136261;
-            for (let i = 0; i < str.length; i++) {
-              h ^= str.charCodeAt(i);
+            for (let i = 0; i < s.length; i++) {
+              h ^= s.charCodeAt(i);
               h = Math.imul(h, 16777619);
             }
             return Math.abs(h);
           }
 
-          function ease(t) {
-            return t < 0.5
-              ? 4 * t * t * t
-              : 1 - Math.pow(-2 * t + 2, 3) / 2;
+          function actionProgress(frame, beat) {
+            const start = Number(beat.start ?? beat.time ?? 0) * FPS;
+            const end = Number(beat.end ?? ((beat.time ?? 0) + 1)) * FPS;
+            return clamp((frame - start) / Math.max(1, end - start));
           }
 
-          function normalizeAction(value = "") {
-            return String(value)
-              .toLowerCase()
-              .replace(/[-\s]+/g, "_");
+          function motionFor(action, p, seed) {
+            const a = String(action || "").toLowerCase();
+            const s = (seed % 1000) / 1000;
+            const t = ease(p);
+
+            if (a === "walk" || a === "run" || a === "enter" || a === "exit") {
+              return { x: lerp(-90, 90, t), y: Math.sin(p * Math.PI * 4 + s * 5) * 6, r: Math.sin(p * Math.PI * 4) * 2, scale: 1 };
+            }
+            if (a === "reach" || a === "pick_up" || a === "put_down") {
+              return { x: Math.sin(p * Math.PI) * 18, y: -Math.sin(p * Math.PI) * 22, r: 0, scale: 1 };
+            }
+            if (a === "open" || a === "close") {
+              return { x: 0, y: 0, r: lerp(-8, 0, t), scale: 1 };
+            }
+            if (a === "look" || a === "talk" || a === "think" || a === "read") {
+              return { x: Math.sin(p * Math.PI * 2 + s * 3) * 7, y: 0, r: Math.sin(p * Math.PI * 2) * 1.2, scale: 1 };
+            }
+            if (a === "type") {
+              return { x: Math.sin(p * Math.PI * 12) * 2, y: Math.sin(p * Math.PI * 8) * 2, r: 0, scale: 1 };
+            }
+            if (a === "discover" || a === "reveal") {
+              return { x: 0, y: -Math.sin(p * Math.PI) * 18, r: 0, scale: lerp(0.84, 1.05, t) };
+            }
+            if (a === "shake" || a === "react") {
+              return { x: Math.sin(p * Math.PI * 14) * 8, y: Math.cos(p * Math.PI * 12) * 4, r: Math.sin(p * Math.PI * 12) * 2, scale: 1 };
+            }
+            if (a === "fall") {
+              return { x: 0, y: lerp(-80, 90, t), r: lerp(0, 18, t), scale: 1 };
+            }
+            if (a === "rise") {
+              return { x: 0, y: lerp(80, -80, t), r: lerp(4, 0, t), scale: 1 };
+            }
+            if (a === "fly") {
+              return { x: lerp(-100, 100, t), y: -Math.sin(p * Math.PI) * 110, r: lerp(-8, 10, t), scale: 1 };
+            }
+            if (a === "grow") {
+              return { x: 0, y: 0, r: 0, scale: lerp(0.5, 1.25, t) };
+            }
+            if (a === "shrink") {
+              return { x: 0, y: 0, r: 0, scale: lerp(1.2, 0.55, t) };
+            }
+            if (a === "collide") {
+              return { x: Math.sin(p * Math.PI) * 24, y: -Math.sin(p * Math.PI) * 12, r: Math.sin(p * Math.PI * 8) * 4, scale: 1 };
+            }
+            if (a === "turn") {
+              return { x: 0, y: 0, r: lerp(-18, 0, t), scale: 1 };
+            }
+            if (a === "celebrate") {
+              return { x: Math.sin(p * Math.PI * 4) * 8, y: -Math.abs(Math.sin(p * Math.PI * 2)) * 35, r: Math.sin(p * Math.PI * 3) * 4, scale: 1.04 };
+            }
+            return { x: 0, y: 0, r: 0, scale: 1 };
           }
 
-          function actionTransform(action, p, seed) {
-            const a = normalizeAction(action);
-            const s = (seed % 997) / 997;
-
-            if (a.includes("jump") || a.includes("hop")) {
-              return {
-                x: Math.sin(p * Math.PI) * 20,
-                y: -Math.sin(p * Math.PI) * 90,
-                r: Math.sin(p * Math.PI * 2) * 3,
-                scale: 1 + Math.sin(p * Math.PI) * 0.04,
-              };
+          function activeMotion(id, beats, frame, sceneDuration) {
+            let result = { x: 0, y: 0, r: 0, scale: 1, action: "" };
+            for (const beat of beats || []) {
+              if (beat.subject !== id && beat.object !== id) continue;
+              const p = actionProgress(frame, beat);
+              const start = Number(beat.start ?? beat.time ?? 0) * FPS;
+              const end = Number(beat.end ?? ((beat.time ?? 0) + 1)) * FPS;
+              if (frame >= start && frame <= end) {
+                result = { ...motionFor(beat.action, p, hash(id)), action: beat.action };
+              }
             }
+            return result;
+          }
 
-            if (a.includes("run") || a.includes("walk") || a.includes("move")) {
-              return {
-                x: interpolate(p, [0, 1], [-90, 90]),
-                y: Math.sin(p * Math.PI * 4 + s * 4) * 7,
-                r: Math.sin(p * Math.PI * 4) * 2,
-                scale: 1,
-              };
+          function SvgIcon({ type, accent = C.blue }) {
+            const t = String(type || "").toLowerCase();
+
+            if (t.includes("phone")) return <g>
+              <rect x="35" y="8" width="110" height="205" rx="20" fill="#1E2736" />
+              <rect x="46" y="25" width="88" height="158" rx="11" fill="#8DC7E9" />
+              <circle cx="90" cy="196" r="7" fill="#DDE4EC" />
+              <circle cx="112" cy="55" r="7" fill="#FFFFFF" opacity=".7" />
+            </g>;
+
+            if (t.includes("laptop") || t.includes("computer")) return <g>
+              <rect x="18" y="22" width="145" height="100" rx="10" fill="#344254" />
+              <rect x="29" y="33" width="123" height="77" rx="5" fill="#B4DFF2" />
+              <path d="M0 128 L181 128 L162 150 L19 150Z" fill="#727F90" />
+              <line x1="48" y1="60" x2="110" y2="60" stroke={accent} strokeWidth="7" strokeLinecap="round" />
+              <line x1="48" y1="82" x2="92" y2="82" stroke="#FFFFFF" strokeWidth="6" strokeLinecap="round" opacity=".75" />
+            </g>;
+
+            if (t.includes("clock")) return <g>
+              <circle cx="92" cy="92" r="75" fill="#FFF9EA" stroke="#394657" strokeWidth="9" />
+              {Array.from({length: 12}).map((_, i) => {
+                const a = i * Math.PI / 6;
+                return <circle key={i} cx={92 + Math.sin(a)*59} cy={92 - Math.cos(a)*59} r="3.5" fill="#647082" />;
+              })}
+              <line x1="92" y1="92" x2="92" y2="45" stroke="#394657" strokeWidth="8" strokeLinecap="round" />
+              <line x1="92" y1="92" x2="127" y2="108" stroke="#394657" strokeWidth="8" strokeLinecap="round" />
+            </g>;
+
+            if (t.includes("coffee") || t.includes("cup")) return <g>
+              <path d="M35 48 L137 48 L126 145 Q85 168 46 145Z" fill="#F5F0E8" stroke="#465365" strokeWidth="8" />
+              <path d="M137 72 Q188 63 165 119 Q153 138 127 128" fill="none" stroke="#465365" strokeWidth="9" />
+              <path d="M60 28 Q49 5 66 0 M92 28 Q81 5 98 0" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round" opacity=".8" />
+            </g>;
+
+            if (t.includes("book")) return <g>
+              <path d="M12 36 Q55 14 91 35 L91 155 Q52 134 12 153Z" fill="#F0E0BD" stroke="#6A5A4B" strokeWidth="7" />
+              <path d="M91 35 Q128 14 170 36 L170 153 Q130 134 91 155Z" fill="#FFF4D9" stroke="#6A5A4B" strokeWidth="7" />
+              {[0,1,2].map(i => <line key={i} x1="30" y1={68+i*24} x2="72" y2={63+i*24} stroke="#A18D70" strokeWidth="5" />)}
+              {[0,1,2].map(i => <line key={i} x1="108" y1={63+i*24} x2="151" y2={68+i*24} stroke="#A18D70" strokeWidth="5" />)}
+            </g>;
+
+            if (t.includes("chart") || t.includes("graph")) return <g>
+              <rect x="8" y="12" width="175" height="150" rx="14" fill="#FBFAF5" stroke="#7D8796" strokeWidth="6" />
+              <polyline points="28,132 62,108 91,118 125,66 160,38" fill="none" stroke={accent} strokeWidth="11" strokeLinecap="round" strokeLinejoin="round" />
+              <circle cx="62" cy="108" r="7" fill={accent} />
+              <circle cx="125" cy="66" r="7" fill={accent} />
+            </g>;
+
+            if (t.includes("money") || t.includes("cash")) return <g>
+              <rect x="15" y="48" width="165" height="98" rx="16" fill="#78B884" stroke="#386C45" strokeWidth="7" />
+              <circle cx="98" cy="97" r="30" fill="#C8E4A6" stroke="#386C45" strokeWidth="5" />
+              <text x="98" y="112" textAnchor="middle" fontSize="44" fontWeight="800" fill="#386C45">$</text>
+            </g>;
+
+            if (t.includes("key")) return <g>
+              <circle cx="60" cy="82" r="34" fill="none" stroke="#E2B94F" strokeWidth="16" />
+              <path d="M88 105 L165 168 M125 137 L143 119 M144 154 L162 136" stroke="#E2B94F" strokeWidth="16" strokeLinecap="round" />
+            </g>;
+
+            if (t.includes("lock")) return <g>
+              <rect x="35" y="75" width="120" height="105" rx="16" fill="#F0C75E" stroke="#8B6C2C" strokeWidth="7" />
+              <path d="M60 80 V52 Q60 18 95 18 Q130 18 130 52 V80" fill="none" stroke="#8B6C2C" strokeWidth="15" />
+              <circle cx="95" cy="123" r="11" fill="#8B6C2C" />
+            </g>;
+
+            if (t.includes("lightbulb") || t.includes("idea")) return <g>
+              <path d="M92 18 Q40 18 40 72 Q40 103 66 123 L66 146 L118 146 L118 123 Q144 103 144 72 Q144 18 92 18Z" fill="#FFD45A" stroke="#A2761F" strokeWidth="7" />
+              <path d="M72 164 L112 164" stroke="#5B6574" strokeWidth="11" strokeLinecap="round" />
+              <path d="M76 182 L108 182" stroke="#5B6574" strokeWidth="9" strokeLinecap="round" />
+            </g>;
+
+            if (t.includes("rocket")) return <g>
+              <path d="M95 10 Q155 42 126 132 L95 166 L64 132 Q35 42 95 10Z" fill="#F4F6F8" stroke="#495568" strokeWidth="7" />
+              <circle cx="95" cy="77" r="20" fill="#83C5EA" stroke="#495568" strokeWidth="6" />
+              <path d="M64 117 L25 145 L59 145 M126 117 L165 145 L131 145" fill="#E97861" stroke="#9B4A3D" strokeWidth="5" />
+              <path d="M79 160 L95 202 L111 160" fill="#FFD15B" />
+            </g>;
+
+            if (t.includes("moon")) return <g>
+              <path d="M132 22 Q78 28 74 88 Q72 142 127 160 Q86 176 50 150 Q13 124 20 76 Q28 22 82 13 Q111 9 132 22Z" fill="#F4E9B8" stroke="#8D7F59" strokeWidth="6" />
+              <circle cx="71" cy="72" r="11" fill="#D4C994" /><circle cx="102" cy="112" r="8" fill="#D4C994" />
+            </g>;
+
+            if (t.includes("planet") || t.includes("globe")) return <g>
+              <circle cx="94" cy="94" r="76" fill="#6EA7E8" stroke="#385D89" strokeWidth="7" />
+              <path d="M38 83 Q72 60 96 76 T150 69 M46 115 Q83 95 118 120 T150 115" fill="none" stroke="#72B77D" strokeWidth="18" strokeLinecap="round" />
+            </g>;
+
+            if (t.includes("tree")) return <g>
+              <rect x="82" y="102" width="26" height="92" rx="10" fill="#79543D" />
+              <circle cx="95" cy="80" r="70" fill="#70AA70" />
+              <circle cx="51" cy="98" r="45" fill="#82B97B" />
+              <circle cx="141" cy="99" r="48" fill="#5D9D64" />
+            </g>;
+
+            if (t.includes("car")) return <g>
+              <path d="M28 104 L51 57 L143 57 L166 104 L178 139 L16 139Z" fill="#DF6A63" stroke="#753D3A" strokeWidth="7" />
+              <rect x="62" y="71" width="66" height="32" rx="8" fill="#A8D4EA" />
+              <circle cx="52" cy="143" r="21" fill="#263243" /><circle cx="144" cy="143" r="21" fill="#263243" />
+            </g>;
+
+            if (t.includes("trophy")) return <g>
+              <path d="M54 36 L136 36 L126 108 Q95 130 64 108Z" fill="#FFD35A" stroke="#9A7620" strokeWidth="7" />
+              <path d="M55 55 Q14 45 26 91 Q35 112 65 99 M135 55 Q176 45 164 91 Q155 112 125 99" fill="none" stroke="#9A7620" strokeWidth="9" />
+              <rect x="87" y="111" width="16" height="39" fill="#9A7620" /><rect x="54" y="149" width="82" height="17" rx="8" fill="#9A7620" />
+            </g>;
+
+            if (t.includes("heart")) return <path d="M95 165 L24 88 Q4 52 36 28 Q67 7 95 45 Q123 7 154 28 Q186 52 166 88Z" fill="#E96B73" stroke="#9F3F49" strokeWidth="7" />;
+
+            if (t.includes("brain")) return <g>
+              <path d="M78 26 Q41 9 30 53 Q6 75 30 105 Q15 141 54 151 Q71 177 95 151 Q124 174 139 142 Q173 136 151 105 Q175 73 146 52 Q141 14 108 29 Q94 7 78 26Z" fill="#DCA6E9" stroke="#563D68" strokeWidth="7" />
+              <path d="M76 49 Q57 69 76 88 Q53 105 71 127 M108 46 Q91 67 111 84 Q91 103 109 126" fill="none" stroke="#8D5B9B" strokeWidth="7" strokeLinecap="round" />
+            </g>;
+
+            if (t.includes("mountain")) return <g>
+              <path d="M12 166 L72 62 L103 105 L134 38 L181 166Z" fill="#7F9AB1" stroke="#4B6073" strokeWidth="7" />
+              <path d="M53 95 L72 62 L91 89 L78 86Z M117 72 L134 38 L151 75 L138 68Z" fill="#F4F1E8" />
+            </g>;
+
+            if (t.includes("whale")) return <g>
+              <path d="M18 108 Q57 42 124 73 Q152 86 173 66 Q168 124 116 137 Q58 151 18 108Z" fill="#5F8FB3" stroke="#38586F" strokeWidth="7" />
+              <path d="M60 77 Q83 65 101 78" fill="none" stroke="#D8EDF7" strokeWidth="6" />
+              <circle cx="135" cy="92" r="6" fill="#1C2837" />
+              <path d="M92 70 Q100 38 112 24" stroke="#78B7D2" strokeWidth="7" fill="none" strokeLinecap="round" />
+            </g>;
+
+            return <g>
+              <rect x="18" y="25" width="155" height="125" rx="24" fill="#FFFFFF" stroke="#738092" strokeWidth="7" />
+              <circle cx="67" cy="83" r="9" fill={accent} />
+              <circle cx="123" cy="83" r="9" fill={accent} />
+              <path d="M62 112 Q95 135 128 112" fill="none" stroke="#738092" strokeWidth="6" strokeLinecap="round" />
+            </g>;
+          }
+
+          function Character({ character, beats, frame, index }) {
+            const id = character.id;
+            const m = activeMotion(id, beats, frame);
+            const seed = hash(id);
+            const blink = (Math.floor(frame / 4) + seed) % 145 === 0;
+            const x = Number(character.x ?? 50);
+            const y = Number(character.y ?? 78);
+            const skin = character.skin || C.skin;
+            const hair = character.hair || C.hair;
+            const shirt = character.color || C.blue;
+            const lookLeft = m.action === "look" || m.action === "search";
+            const eyeY = blink ? 107 : 102;
+            const mouth = m.action === "react" || m.action === "discover" ? "M78 143 Q96 132 114 143" : "M78 141 Q96 151 114 141";
+
+            return (
+              <div style={{
+                position: "absolute",
+                left: `${x}%`,
+                top: `${y}%`,
+                width: 260,
+                height: 500,
+                transform: `translate(-50%,-100%) translate(${m.x}px,${m.y}px) rotate(${m.r}deg) scale(${m.scale})`,
+                transformOrigin: "50% 100%",
+                zIndex: 20,
+                filter: "drop-shadow(0 20px 14px rgba(20,30,50,.16))"
+              }}>
+                <svg width="260" height="500" viewBox="0 0 260 500">
+                  <g>
+                    <ellipse cx="130" cy="462" rx="84" ry="22" fill="#1D293A" opacity=".13" />
+                    <path d="M67 197 Q130 165 193 197 L207 348 Q130 379 53 348Z" fill={shirt} />
+                    <path d="M70 216 Q27 252 38 326" fill="none" stroke={skin} strokeWidth="31" strokeLinecap="round" />
+                    <path d="M190 216 Q233 252 222 326" fill="none" stroke={skin} strokeWidth="31" strokeLinecap="round" />
+                    <path d="M89 345 L78 454" stroke="#26334B" strokeWidth="40" strokeLinecap="round" />
+                    <path d="M171 345 L182 454" stroke="#26334B" strokeWidth="40" strokeLinecap="round" />
+                    <path d="M52 460 L96 460" stroke="#182235" strokeWidth="26" strokeLinecap="round" />
+                    <path d="M164 460 L208 460" stroke="#182235" strokeWidth="26" strokeLinecap="round" />
+
+                    <g transform={`rotate(${Math.sin(frame/FPS*1.7+index)*1.5} 130 110)`}>
+                      <circle cx="130" cy="108" r="88" fill={skin} />
+                      <path d="M42 97 Q49 20 128 20 Q205 20 218 96 Q185 67 146 69 Q95 69 42 97Z" fill={hair} />
+                      <path d="M82 102 Q90 96 98 102" stroke={C.ink} strokeWidth="7" strokeLinecap="round" />
+                      <path d="M162 102 Q170 96 178 102" stroke={C.ink} strokeWidth="7" strokeLinecap="round" />
+                      <ellipse cx={lookLeft ? 91 : 90} cy={eyeY} rx="7" ry={blink ? 2 : 10} fill={C.ink} />
+                      <ellipse cx={lookLeft ? 171 : 170} cy={eyeY} rx="7" ry={blink ? 2 : 10} fill={C.ink} />
+                      <path d="M101 143 Q130 157 159 143" fill="none" stroke={C.ink} strokeWidth="7" strokeLinecap="round" />
+                      <path d={mouth} fill="none" stroke={C.ink} strokeWidth="7" strokeLinecap="round" opacity={m.action === "discover" ? .9 : .35} />
+                      <circle cx="76" cy="136" r="12" fill="#E98C87" opacity=".28" />
+                      <circle cx="184" cy="136" r="12" fill="#E98C87" opacity=".28" />
+                    </g>
+
+                    {(m.action === "point" || m.action === "discover") && (
+                      <path d="M191 233 Q235 215 247 175" fill="none" stroke={skin} strokeWidth="28" strokeLinecap="round" />
+                    )}
+                  </g>
+                </svg>
+              </div>
+            );
+          }
+
+          function Object({ object, beats, frame, index }) {
+            const m = activeMotion(object.id, beats, frame);
+            const seed = hash(object.id);
+            const idle = Math.sin(frame/FPS*1.4 + seed) * 2.5;
+            const x = Number(object.x ?? 50);
+            const y = Number(object.y ?? 50);
+            const scale = Number(object.scale ?? 1);
+
+            return (
+              <div style={{
+                position: "absolute",
+                left: `${x}%`,
+                top: `${y}%`,
+                width: 220,
+                height: 220,
+                transform: `translate(-50%,-50%) translate(${m.x}px,${m.y + idle}px) rotate(${m.r}deg) scale(${scale*m.scale})`,
+                transformOrigin: "50% 50%",
+                zIndex: 12 + index,
+                filter: "drop-shadow(0 15px 12px rgba(20,30,50,.13))"
+              }}>
+                <svg width="220" height="220" viewBox="0 0 190 210">
+                  <SvgIcon type={object.type} />
+                </svg>
+              </div>
+            );
+          }
+
+          function Environment({ setting, sceneIndex, theme }) {
+            const s = String(setting || "").toLowerCase();
+            const bg = theme?.background || "#EAF0F7";
+            const accent = theme?.accent || C.blue;
+            const night = s.includes("space") || s.includes("night");
+
+            const isCity = s.includes("city") || s.includes("street");
+            const isOffice = s.includes("office");
+            const isLab = s.includes("laboratory") || s.includes("lab");
+            const isClass = s.includes("classroom") || s.includes("school");
+            const isKitchen = s.includes("kitchen") || s.includes("restaurant");
+            const isForest = s.includes("forest") || s.includes("mountain");
+            const isOcean = s.includes("ocean") || s.includes("beach");
+            const isGym = s.includes("gym");
+
+            return (
+              <AbsoluteFill style={{ background: bg, overflow: "hidden" }}>
+                <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+                  <defs>
+                    <linearGradient id={`g${sceneIndex}`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={night ? "#18213A" : "#DDEBF6"} />
+                      <stop offset="100%" stopColor={night ? "#2C3858" : "#F6F1E8"} />
+                    </linearGradient>
+                    <filter id={`shadow${sceneIndex}`} x="-30%" y="-30%" width="160%" height="160%">
+                      <feDropShadow dx="0" dy="12" stdDeviation="16" floodOpacity=".13" />
+                    </filter>
+                  </defs>
+
+                  <rect width={W} height={H} fill={`url(#g${sceneIndex})`} />
+
+                  {night ? (
+                    <>
+                      {[70,170,280,410,560,690,820,950].map((x,i)=>
+                        <circle key={i} cx={x} cy={170+((i*91)%480)} r={i%2?4:6} fill="#fff" opacity=".62" />
+                      )}
+                      <circle cx="870" cy="270" r="78" fill="#F6E9B7" opacity=".9" />
+                    </>
+                  ) : (
+                    <>
+                      <circle cx="865" cy="235" r="90" fill="#FFD878" opacity=".92" />
+                      <path d="M0 1120 Q240 970 500 1110 T1080 1050 V1920 H0Z" fill="#D7E6D3" />
+                    </>
+                  )}
+
+                  {isOffice && <>
+                    <rect x="0" y="1170" width={W} height="750" fill="#D7D1C9" />
+                    <rect x="70" y="240" width="390" height="400" rx="28" fill="#9EC3DB" filter={`url(#shadow${sceneIndex})`} />
+                    <rect x="105" y="275" width="320" height="330" rx="12" fill="#C8E5F2" />
+                    <line x1="265" y1="275" x2="265" y2="605" stroke="#9ABED1" strokeWidth="5" />
+                    <line x1="105" y1="438" x2="425" y2="438" stroke="#9ABED1" strokeWidth="5" />
+                    <rect x="610" y="720" width="330" height="70" rx="25" fill={accent} opacity=".8" />
+                    <rect x="570" y="790" width="410" height="420" rx="28" fill="#EEEAE2" />
+                    <rect x="625" y="850" width="120" height="220" rx="12" fill="#C5CDD6" />
+                  </>}
+
+                  {isLab && <>
+                    <rect x="0" y="1160" width={W} height="760" fill="#C9D0D3" />
+                    <rect x="75" y="310" width="930" height="520" rx="28" fill="#E9ECEA" />
+                    <rect x="125" y="360" width="300" height="390" rx="20" fill="#CFE9EF" />
+                    <rect x="490" y="470" width="410" height="70" rx="20" fill="#A8B3BC" />
+                    <circle cx="560" cy="720" r="105" fill="#BFD5C8" opacity=".8" />
+                  </>}
+
+                  {isClass && <>
+                    <rect x="0" y="1160" width={W} height="760" fill="#C9B99E" />
+                    <rect x="80" y="250" width="920" height="520" rx="24" fill="#45505A" />
+                    <rect x="115" y="285" width="850" height="450" fill="#58636D" />
+                    <line x1="190" y1="440" x2="620" y2="440" stroke="#F3F0E7" strokeWidth="9" opacity=".7" />
+                    <line x1="230" y1="570" x2="760" y2="570" stroke="#F3F0E7" strokeWidth="9" opacity=".6" />
+                    <rect x="90" y="970" width="900" height="60" rx="18" fill="#8B6E52" />
+                  </>}
+
+                  {isKitchen && <>
+                    <rect x="0" y="1170" width={W} height="750" fill="#D4D5CF" />
+                    <rect x="70" y="620" width="940" height="560" rx="25" fill="#F0EEE8" />
+                    <rect x="130" y="710" width="250" height="290" rx="20" fill="#B8C2C9" />
+                    <rect x="630" y="700" width="280" height="290" rx="20" fill="#AEB8C0" />
+                    <circle cx="755" cy="800" r="60" fill="#DCE6EA" />
+                  </>}
+
+                  {isGym && <>
+                    <rect x="0" y="1160" width={W} height="760" fill="#303947" />
+                    <rect x="80" y="270" width="920" height="560" rx="30" fill="#4C5867" />
+                    <circle cx="190" cy="420" r="100" fill="#647181" />
+                    <rect x="610" y="430" width="280" height="35" rx="18" fill="#202938" />
+                    <circle cx="620" cy="450" r="40" fill="#202938" /><circle cx="880" cy="450" r="40" fill="#202938" />
+                  </>}
+
+                  {isCity && <>
+                    <rect x="0" y="1130" width={W} height="790" fill="#707983" />
+                    {[40,240,460,700,910].map((x,i)=>
+                      <g key={i}>
+                        <rect x={x} y={500-(i%3)*70} width="160" height={630+(i%3)*70} fill={i%2?"#9CA6AF":"#89949F"} />
+                        {[0,1,2,3].map(j =>
+                          <rect key={j} x={x+25} y={580+j*110-(i%2)*25} width="28" height="42" fill="#F7D979" opacity=".65" />
+                        )}
+                      </g>
+                    )}
+                    <rect x="0" y="1420" width={W} height="16" fill="#F6D76D" />
+                  </>}
+
+                  {isForest && <>
+                    <rect x="0" y="1230" width={W} height="690" fill="#98C48E" />
+                    {[70,260,480,720,930].map((x,i)=>
+                      <g key={i}>
+                        <rect x={x} y="570" width="34" height="700" fill="#76533D" />
+                        <circle cx={x+17} cy="560" r={120+(i%2)*25} fill={i%2?"#70A86D":"#82B97A"} />
+                      </g>
+                    )}
+                    {s.includes("mountain") && <path d="M0 1250 L240 850 L430 1120 L630 690 L1080 1260Z" fill="#71899A" opacity=".85" />}
+                  </>}
+
+                  {isOcean && <>
+                    <rect x="0" y="1030" width={W} height="890" fill="#4D9DC1" />
+                    <path d="M0 1100 Q135 1040 270 1100 T540 1100 T810 1100 T1080 1100 V1200 Q945 1140 810 1200 T540 1200 T270 1200 T0 1200Z" fill="#78BED5" />
+                    <path d="M0 1300 Q160 1240 320 1300 T640 1300 T960 1300 T1080 1300" fill="none" stroke="#B5E4EE" strokeWidth="16" opacity=".6" />
+                  </>}
+
+                  {!isOffice && !isLab && !isClass && !isKitchen && !isGym && !isCity && !isForest && !isOcean && <>
+                    <rect x="0" y="1210" width={W} height="710" fill="#D8D1C6" />
+                    <path d="M0 1240 Q270 1130 540 1220 T1080 1190 V1920 H0Z" fill="#C9D8C9" />
+                  </>}
+
+                  <rect x="0" y="0" width={W} height={H} fill="none" stroke="rgba(255,255,255,.18)" strokeWidth="2" />
+                </svg>
+              </AbsoluteFill>
+            );
+          }
+
+          function ActionFX({ beats, frame }) {
+            for (const beat of beats || []) {
+              const start = Number(beat.start ?? beat.time ?? 0) * FPS;
+              const end = Number(beat.end ?? ((beat.time ?? 0)+1)) * FPS;
+              if (frame < start || frame > end) continue;
+              const p = clamp((frame-start)/Math.max(1,end-start));
+              const a = String(beat.action || "").toLowerCase();
+              if (!["discover","reveal","collide","celebrate","fall"].includes(a)) continue;
+
+              const opacity = interpolate(p, [0,.15,.75,1], [0,.9,.35,0]);
+              const r = interpolate(p, [0,1], [20,130]);
+
+              return (
+                <div style={{position:"absolute",left:"50%",top:"43%",transform:"translate(-50%,-50%)",opacity,zIndex:40,pointerEvents:"none"}}>
+                  <svg width="400" height="400" viewBox="0 0 400 400">
+                    <circle cx="200" cy="200" r={r} fill="none" stroke="#FFD75A" strokeWidth="11" />
+                    {[0,45,90,135,180,225,270,315].map(deg=>{
+                      const rad=deg*Math.PI/180;
+                      return <line key={deg}
+                        x1={200+Math.cos(rad)*(r+18)} y1={200+Math.sin(rad)*(r+18)}
+                        x2={200+Math.cos(rad)*(r+65)} y2={200+Math.sin(rad)*(r+65)}
+                        stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round"/>;
+                    })}
+                  </svg>
+                </div>
+              );
             }
-
-            if (a.includes("shake") || a.includes("vibrate")) {
-              return {
-                x: Math.sin(p * Math.PI * 12) * 9,
-                y: Math.cos(p * Math.PI * 10) * 4,
-                r: Math.sin(p * Math.PI * 10) * 2,
-                scale: 1,
-              };
-            }
-
-            if (a.includes("grow") || a.includes("reveal")) {
-              return {
-                x: 0,
-                y: 0,
-                r: 0,
-                scale: interpolate(p, [0, 1], [0.75, 1]),
-              };
-            }
-
-            if (a.includes("fall") || a.includes("drop")) {
-              return {
-                x: 0,
-                y: interpolate(ease(p), [0, 1], [-120, 100]),
-                r: interpolate(p, [0, 1], [0, 18]),
-                scale: 1,
-              };
-            }
-
-            if (a.includes("fly")) {
-              return {
-                x: interpolate(p, [0, 1], [-160, 160]),
-                y: -Math.sin(p * Math.PI) * 110,
-                r: interpolate(p, [0, 1], [-10, 10]),
-                scale: 1,
-              };
-            }
-
-            if (a.includes("celebrate")) {
-              return {
-                x: Math.sin(p * Math.PI * 4) * 8,
-                y: -Math.abs(Math.sin(p * Math.PI * 2)) * 35,
-                r: Math.sin(p * Math.PI * 3) * 4,
-                scale: 1 + Math.abs(Math.sin(p * Math.PI * 2)) * 0.04,
-              };
-            }
-
-            if (a.includes("think") || a.includes("look") || a.includes("search")) {
-              return {
-                x: Math.sin(p * Math.PI * 2) * 14,
-                y: 0,
-                r: Math.sin(p * Math.PI * 2) * 1.5,
-                scale: 1,
-              };
-            }
-
-            if (a.includes("point")) {
-              return {
-                x: 8,
-                y: -3,
-                r: 0,
-                scale: 1.015,
-              };
-            }
-
-            return {
-              x: Math.sin(p * Math.PI * 2 + s * 5) * 3,
-              y: Math.sin(p * Math.PI * 3 + s * 2) * 2,
-              r: Math.sin(p * Math.PI * 2) * 0.8,
-              scale: 1,
-            };
+            return null;
           }
 
           function Camera({ type, progress, children }) {
             const t = clamp(progress);
-            const c = normalizeAction(type);
+            const c = String(type || "steady").toLowerCase();
+            let x=0,y=0,scale=1,rotate=0;
 
-            let scale = 1;
-            let x = 0;
-            let y = 0;
-            let rotate = 0;
+            if (c==="push_in") scale=lerp(1,1.075,ease(t));
+            else if (c==="pull_out") scale=lerp(1.075,1,ease(t));
+            else if (c==="pan_left") { x=lerp(45,-45,ease(t)); scale=1.035; }
+            else if (c==="pan_right") { x=lerp(-45,45,ease(t)); scale=1.035; }
+            else if (c==="tilt_up") { y=lerp(35,-35,ease(t)); scale=1.035; }
+            else if (c==="tilt_down") { y=lerp(-35,35,ease(t)); scale=1.035; }
+            else if (c==="follow") { x=Math.sin(t*Math.PI*2)*28; scale=1.045; }
+            else if (c==="reveal") { y=lerp(45,0,ease(t)); scale=lerp(1.055,1,ease(t)); }
+            else if (c==="shake") { x=Math.sin(t*Math.PI*18)*6; y=Math.cos(t*Math.PI*16)*4; rotate=Math.sin(t*Math.PI*12)*.7; scale=1.025; }
 
-            if (c.includes("push_in") || c === "push") {
-              scale = interpolate(t, [0, 1], [1, 1.055]);
-            } else if (c.includes("pull_out") || c === "pull") {
-              scale = interpolate(t, [0, 1], [1.055, 1]);
-            } else if (c.includes("pan_left")) {
-              x = interpolate(t, [0, 1], [35, -35]);
-              scale = 1.025;
-            } else if (c.includes("pan_right")) {
-              x = interpolate(t, [0, 1], [-35, 35]);
-              scale = 1.025;
-            } else if (c.includes("tilt_up")) {
-              y = interpolate(t, [0, 1], [25, -25]);
-              scale = 1.025;
-            } else if (c.includes("tilt_down")) {
-              y = interpolate(t, [0, 1], [-25, 25]);
-              scale = 1.025;
-            } else if (c.includes("shake")) {
-              x = Math.sin(t * Math.PI * 18) * 5;
-              y = Math.cos(t * Math.PI * 16) * 3;
-              rotate = Math.sin(t * Math.PI * 12) * 0.5;
-              scale = 1.02;
-            } else if (c.includes("reveal")) {
-              scale = interpolate(t, [0, 1], [1.04, 1]);
-              y = interpolate(t, [0, 1], [35, 0]);
-            } else if (c.includes("follow")) {
-              x = Math.sin(t * Math.PI * 2) * 18;
-              scale = 1.035;
-            }
-
-            return (
-              <div
-                style={{
-                  position: "absolute",
-                  inset: -80,
-                  transform: `translate(${x}px, ${y}px) scale(${scale}) rotate(${rotate}deg)`,
-                  transformOrigin: "50% 50%",
-                }}
-              >
-                {children}
-              </div>
-            );
-          }
-
-          function Background({ setting = "", theme = {}, sceneIndex = 0 }) {
-            const s = String(setting).toLowerCase();
-            const isNight = s.includes("night") || s.includes("space");
-            const bg = theme?.background || (isNight ? "#18213B" : PALETTE.bg);
-            const accent = theme?.accent || "#6C7FEA";
-
-            return (
-              <AbsoluteFill
-                style={{
-                  background: bg,
-                  overflow: "hidden",
-                }}
-              >
-                <svg
-                  width="100%"
-                  height="100%"
-                  viewBox={`0 0 ${W} ${H}`}
-                  preserveAspectRatio="none"
-                >
-                  <defs>
-                    <linearGradient id={`sky-${sceneIndex}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={isNight ? "#17213A" : "#DCEAF8"} />
-                      <stop offset="100%" stopColor={isNight ? "#273657" : "#F6F3EA"} />
-                    </linearGradient>
-                    <filter id={`shadow-${sceneIndex}`} x="-30%" y="-30%" width="160%" height="160%">
-                      <feDropShadow dx="0" dy="12" stdDeviation="15" floodOpacity="0.12" />
-                    </filter>
-                  </defs>
-
-                  <rect width={W} height={H} fill={`url(#sky-${sceneIndex})`} />
-
-                  {isNight ? (
-                    <>
-                      {[80, 190, 320, 510, 700, 850, 970].map((x, i) => (
-                        <circle key={i} cx={x} cy={180 + ((i * 83) % 420)} r="5" fill="#FFFFFF" opacity="0.65" />
-                      ))}
-                      <circle cx="860" cy="250" r="74" fill="#F6E9B7" opacity="0.9" />
-                    </>
-                  ) : (
-                    <>
-                      <circle cx="860" cy="240" r="88" fill="#FFD978" opacity="0.95" />
-                      <path d="M0 1190 Q220 1010 450 1170 T1080 1090 V1920 H0Z" fill="#D6E5D5" />
-                    </>
-                  )}
-
-                  {s.includes("office") && (
-                    <>
-                      <rect x="0" y="1130" width={W} height="790" fill="#D9D1C7" />
-                      <rect x="85" y="250" width="360" height="360" rx="25" fill="#9FC4DC" filter={`url(#shadow-${sceneIndex})`} />
-                      <rect x="120" y="285" width="290" height="290" rx="10" fill="#BDE0F1" />
-                      <rect x="610" y="410" width="300" height="70" rx="18" fill={accent} opacity="0.8" />
-                      <rect x="600" y="480" width="320" height="550" rx="25" fill="#EEE9E1" />
-                    </>
-                  )}
-
-                  {s.includes("bedroom") && (
-                    <>
-                      <rect x="0" y="1260" width={W} height="660" fill="#D8C9C0" />
-                      <rect x="130" y="900" width="820" height="400" rx="40" fill="#A88C82" />
-                      <rect x="190" y="1010" width="700" height="300" rx="32" fill="#F4EEE7" />
-                      <rect x="130" y="550" width="210" height="360" rx="20" fill="#D2B69F" />
-                    </>
-                  )}
-
-                  {s.includes("kitchen") && (
-                    <>
-                      <rect x="0" y="1150" width={W} height="770" fill="#D7D8D2" />
-                      <rect x="80" y="680" width="920" height="500" rx="20" fill="#F1EFE8" />
-                      <rect x="130" y="760" width="230" height="280" rx="18" fill="#BFC7CE" />
-                      <rect x="650" y="760" width="270" height="280" rx="18" fill="#AAB5BE" />
-                    </>
-                  )}
-
-                  {s.includes("classroom") && (
-                    <>
-                      <rect x="0" y="1150" width={W} height="770" fill="#CDBEAA" />
-                      <rect x="80" y="270" width="920" height="520" rx="22" fill="#46505A" />
-                      <rect x="120" y="310" width="840" height="440" fill="#56616B" />
-                      <line x1="200" y1="480" x2="520" y2="480" stroke="#F5F0DF" strokeWidth="10" opacity="0.8" />
-                      <line x1="250" y1="610" x2="700" y2="610" stroke="#F5F0DF" strokeWidth="10" opacity="0.65" />
-                    </>
-                  )}
-
-                  {s.includes("gym") && (
-                    <>
-                      <rect x="0" y="1120" width={W} height="800" fill="#313A46" />
-                      <rect x="80" y="250" width="920" height="570" rx="25" fill="#4C5865" />
-                      <circle cx="180" cy="420" r="90" fill="#677482" opacity="0.8" />
-                      <rect x="650" y="420" width="240" height="30" rx="15" fill="#1C2330" />
-                    </>
-                  )}
-
-                  {s.includes("street") || s.includes("city") ? (
-                    <>
-                      <rect x="0" y="1120" width={W} height="800" fill="#6D747D" />
-                      {[80, 300, 540, 780, 980].map((x, i) => (
-                        <rect key={i} x={x} y={550 - i * 35} width="140" height={570 + i * 35} fill={i % 2 ? "#9CA7B1" : "#87939E"} />
-                      ))}
-                      <rect x="0" y="1390" width={W} height="18" fill="#F5D46A" />
-                    </>
-                  ) : null}
-
-                  {s.includes("forest") && (
-                    <>
-                      <rect x="0" y="1250" width={W} height="670" fill="#9BC58D" />
-                      {[90, 300, 540, 770, 970].map((x, i) => (
-                        <g key={i}>
-                          <rect x={x} y="600" width="34" height="680" fill="#75533C" />
-                          <circle cx={x + 17} cy="570" r={125 + (i % 2) * 25} fill={i % 2 ? "#6CA36B" : "#82B878"} />
-                        </g>
-                      ))}
-                    </>
-                  )}
-
-                  {s.includes("space") && (
-                    <>
-                      <circle cx="250" cy="480" r="130" fill="#5967B6" opacity="0.65" />
-                      <circle cx="800" cy="920" r="190" fill="#6C4EA3" opacity="0.5" />
-                      <path d="M0 1320 Q280 1220 560 1320 T1080 1280 V1920 H0Z" fill="#222B52" />
-                    </>
-                  )}
-
-                  {!(
-                    s.includes("office") ||
-                    s.includes("bedroom") ||
-                    s.includes("kitchen") ||
-                    s.includes("classroom") ||
-                    s.includes("gym") ||
-                    s.includes("street") ||
-                    s.includes("city") ||
-                    s.includes("forest") ||
-                    s.includes("space")
-                  ) && (
-                    <>
-                      <rect x="0" y="1220" width={W} height="700" fill="#D8D1C5" />
-                      <path d="M0 1240 Q270 1130 540 1220 T1080 1180 V1920 H0Z" fill="#C8D5C8" />
-                    </>
-                  )}
-                </svg>
-              </AbsoluteFill>
-            );
-          }
-
-          function Character({ character = {}, activeBeats = [], localFrame, sceneDuration, index }) {
-            const name = character.name || `character-${index}`;
-            const role = String(character.role || "").toLowerCase();
-            const color = character.color || PALETTE.shirt;
-            const hair = character.hair || PALETTE.hair;
-            const skin = character.skin || PALETTE.skin;
-            const baseX = Number(character.x ?? (25 + index * 28));
-            const baseY = Number(character.y ?? 72);
-            const seed = hash(name + index);
-
-            let motion = { x: 0, y: 0, r: 0, scale: 1 };
-
-            for (const beat of activeBeats) {
-              const start = Number(beat.start || 0);
-              const end = Number(beat.end || sceneDuration);
-              if (localFrame >= start * 30 && localFrame <= end * 30) {
-                const p = clamp((localFrame / 30 - start) / Math.max(0.1, end - start));
-                motion = actionTransform(beat.action || beat.event || "", p, seed);
-              }
-            }
-
-            const bob = Math.sin((localFrame / 30) * 2.2 + seed) * 2;
-            const faceTilt = Math.sin((localFrame / 30) * 1.4 + seed) * 1.2;
-
-            return (
-              <div
-                style={{
-                  position: "absolute",
-                  left: `${baseX}%`,
-                  top: `${baseY}%`,
-                  width: 210,
-                  height: 420,
-                  transform: `translate(-50%, -100%) translate(${motion.x}px, ${motion.y + bob}px) rotate(${motion.r}deg) scale(${motion.scale})`,
-                  transformOrigin: "50% 100%",
-                  filter: "drop-shadow(0 18px 12px rgba(20,30,50,.16))",
-                }}
-              >
-                <svg width="210" height="420" viewBox="0 0 210 420">
-                  <g transform={`rotate(${faceTilt} 105 105)`}>
-                    <circle cx="105" cy="105" r="82" fill={skin} />
-                    <path
-                      d="M31 91 Q44 18 108 22 Q169 21 181 91 Q155 62 121 65 Q78 67 31 91Z"
-                      fill={hair}
-                    />
-                    <ellipse cx="75" cy="105" rx="8" ry="12" fill={PALETTE.ink} />
-                    <ellipse cx="136" cy="105" rx="8" ry="12" fill={PALETTE.ink} />
-                    <path d="M87 142 Q105 154 125 140" fill="none" stroke={PALETTE.ink} strokeWidth="7" strokeLinecap="round" />
-                    <circle cx="60" cy="135" r="10" fill="#E88D88" opacity="0.35" />
-                    <circle cx="150" cy="135" r="10" fill="#E88D88" opacity="0.35" />
-                  </g>
-
-                  <path d="M48 194 Q105 165 162 194 L177 315 Q105 345 33 315Z" fill={color} />
-                  <path d="M42 212 Q5 250 20 312" fill="none" stroke={skin} strokeWidth="28" strokeLinecap="round" />
-                  <path d="M168 212 Q205 250 190 312" fill="none" stroke={skin} strokeWidth="28" strokeLinecap="round" />
-                  <path d="M67 315 L57 397" stroke={PALETTE.pants} strokeWidth="35" strokeLinecap="round" />
-                  <path d="M143 315 L153 397" stroke={PALETTE.pants} strokeWidth="35" strokeLinecap="round" />
-                  <path d="M37 401 L77 401" stroke={PALETTE.ink} strokeWidth="24" strokeLinecap="round" />
-                  <path d="M133 401 L173 401" stroke={PALETTE.ink} strokeWidth="24" strokeLinecap="round" />
-
-                  {role.includes("manager") || role.includes("leader") ? (
-                    <path d="M55 194 L105 156 L155 194" fill="none" stroke="#F5F0E6" strokeWidth="18" />
-                  ) : null}
-                </svg>
-              </div>
-            );
-          }
-
-          function Prop({ object = {}, activeBeats = [], localFrame, sceneDuration, index }) {
-            const id = String(object.id || object.type || `object-${index}`);
-            const type = String(object.type || object.id || "object").toLowerCase();
-            const x = Number(object.x ?? (18 + (index * 23) % 70));
-            const y = Number(object.y ?? (42 + (index * 17) % 35));
-            const seed = hash(id + index);
-
-            let motion = { x: 0, y: 0, r: 0, scale: 1 };
-
-            for (const beat of activeBeats) {
-              const target = String(beat.object || "").toLowerCase();
-              if (target && !id.toLowerCase().includes(target) && !type.includes(target)) continue;
-              const start = Number(beat.start || 0);
-              const end = Number(beat.end || sceneDuration);
-              if (localFrame >= start * 30 && localFrame <= end * 30) {
-                const p = clamp((localFrame / 30 - start) / Math.max(0.1, end - start));
-                motion = actionTransform(beat.action || beat.event || "", p, seed);
-              }
-            }
-
-            const scale = Number(object.scale || 1) * motion.scale;
-
-            let graphic = null;
-
-            if (type.includes("phone") || type.includes("mobile")) {
-              graphic = (
-                <g>
-                  <rect x="20" y="10" width="100" height="190" rx="18" fill="#202A3A" />
-                  <rect x="30" y="25" width="80" height="145" rx="10" fill="#8FC7F2" />
-                  <circle cx="70" cy="185" r="7" fill="#D6DEE8" />
-                </g>
-              );
-            } else if (type.includes("laptop") || type.includes("computer")) {
-              graphic = (
-                <g>
-                  <rect x="10" y="20" width="150" height="100" rx="12" fill="#344254" />
-                  <rect x="22" y="32" width="126" height="76" rx="6" fill="#A9D7EE" />
-                  <path d="M0 125 L175 125 L158 145 L18 145Z" fill="#738092" />
-                </g>
-              );
-            } else if (type.includes("clock")) {
-              graphic = (
-                <g>
-                  <circle cx="80" cy="80" r="70" fill="#FFF8E9" stroke="#354052" strokeWidth="10" />
-                  <line x1="80" y1="80" x2="80" y2="40" stroke="#354052" strokeWidth="8" strokeLinecap="round" />
-                  <line x1="80" y1="80" x2="112" y2="95" stroke="#354052" strokeWidth="8" strokeLinecap="round" />
-                </g>
-              );
-            } else if (type.includes("coffee") || type.includes("cup")) {
-              graphic = (
-                <g>
-                  <path d="M25 45 L120 45 L108 145 Q70 165 37 145Z" fill="#F5F0E8" stroke="#394657" strokeWidth="8" />
-                  <path d="M120 70 Q170 60 150 115 Q138 132 113 123" fill="none" stroke="#394657" strokeWidth="9" />
-                  <path d="M50 25 Q40 0 58 0 M80 25 Q70 0 88 0" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round" opacity="0.8" />
-                </g>
-              );
-            } else if (type.includes("book")) {
-              graphic = (
-                <g>
-                  <path d="M10 35 Q55 15 90 35 L90 150 Q50 130 10 150Z" fill="#F3E6C7" stroke="#6A5A4B" strokeWidth="7" />
-                  <path d="M90 35 Q125 15 170 35 L170 150 Q130 130 90 150Z" fill="#FFF4D9" stroke="#6A5A4B" strokeWidth="7" />
-                  <line x1="35" y1="70" x2="70" y2="65" stroke="#A08B70" strokeWidth="6" />
-                  <line x1="110" y1="65" x2="145" y2="70" stroke="#A08B70" strokeWidth="6" />
-                </g>
-              );
-            } else if (type.includes("brain")) {
-              graphic = (
-                <g>
-                  <path d="M65 25 Q30 10 25 55 Q0 75 25 105 Q12 140 50 145 Q65 175 90 150 Q120 170 130 140 Q165 135 145 105 Q170 75 140 55 Q135 15 100 28 Q85 5 65 25Z" fill="#DCA6E9" stroke="#563D68" strokeWidth="7" />
-                  <path d="M70 45 Q55 70 72 88 Q50 105 68 125 M103 42 Q90 65 110 82 Q92 100 108 122" fill="none" stroke="#8D5B9B" strokeWidth="7" strokeLinecap="round" />
-                </g>
-              );
-            } else if (type.includes("heart")) {
-              graphic = (
-                <path d="M80 145 L18 78 Q0 45 30 25 Q58 8 80 40 Q102 8 130 25 Q160 45 142 78Z" fill="#E96B73" stroke="#9F3F49" strokeWidth="7" />
-              );
-            } else if (type.includes("lightbulb") || type.includes("idea")) {
-              graphic = (
-                <g>
-                  <path d="M80 15 Q35 15 35 62 Q35 92 58 110 L58 132 L102 132 L102 110 Q125 92 125 62 Q125 15 80 15Z" fill="#FFD75A" stroke="#A2761F" strokeWidth="7" />
-                  <path d="M60 150 L100 150" stroke="#5B6574" strokeWidth="10" strokeLinecap="round" />
-                </g>
-              );
-            } else if (type.includes("rocket")) {
-              graphic = (
-                <g>
-                  <path d="M80 10 Q140 45 110 130 L80 160 L50 130 Q20 45 80 10Z" fill="#F1F3F7" stroke="#495568" strokeWidth="7" />
-                  <circle cx="80" cy="75" r="18" fill="#77B9E8" stroke="#495568" strokeWidth="6" />
-                  <path d="M50 118 L15 145 L48 145 M110 118 L145 145 L112 145" fill="#E87964" stroke="#9B4A3D" strokeWidth="5" />
-                  <path d="M65 155 L80 190 L95 155" fill="#FFD15B" />
-                </g>
-              );
-            } else if (type.includes("chart") || type.includes("graph")) {
-              graphic = (
-                <g>
-                  <rect x="10" y="10" width="170" height="145" rx="12" fill="#F9F8F2" stroke="#7D8796" strokeWidth="6" />
-                  <polyline points="30,125 65,95 92,108 125,55 160,35" fill="none" stroke="#4E6BE8" strokeWidth="10" strokeLinecap="round" strokeLinejoin="round" />
-                </g>
-              );
-            } else if (type.includes("trophy") || type.includes("award")) {
-              graphic = (
-                <g>
-                  <path d="M55 35 L115 35 L108 105 Q85 125 62 105Z" fill="#FFD35A" stroke="#9A7620" strokeWidth="7" />
-                  <path d="M55 55 Q15 45 25 90 Q35 110 62 98 M115 55 Q155 45 145 90 Q135 110 108 98" fill="none" stroke="#9A7620" strokeWidth="9" />
-                  <rect x="78" y="110" width="14" height="35" fill="#9A7620" />
-                  <rect x="50" y="145" width="70" height="15" rx="7" fill="#9A7620" />
-                </g>
-              );
-            } else if (type.includes("tree")) {
-              graphic = (
-                <g>
-                  <rect x="72" y="100" width="22" height="90" fill="#76533E" />
-                  <circle cx="82" cy="75" r="65" fill="#6DAA6E" />
-                  <circle cx="42" cy="90" r="42" fill="#80B879" />
-                  <circle cx="125" cy="90" r="45" fill="#5E9D65" />
-                </g>
-              );
-            } else if (type.includes("car")) {
-              graphic = (
-                <g>
-                  <path d="M25 100 L45 55 L140 55 L165 100 L175 135 L15 135Z" fill="#E16A63" stroke="#753D3A" strokeWidth="7" />
-                  <circle cx="50" cy="138" r="20" fill="#263243" />
-                  <circle cx="140" cy="138" r="20" fill="#263243" />
-                  <rect x="62" y="70" width="60" height="30" rx="8" fill="#A8D4EA" />
-                </g>
-              );
-            } else {
-              graphic = (
-                <g>
-                  <rect x="20" y="30" width="140" height="110" rx="24" fill="#FFFFFF" stroke="#6E7887" strokeWidth="7" />
-                  <circle cx="65" cy="80" r="9" fill="#4E6BE8" />
-                  <circle cx="115" cy="80" r="9" fill="#4E6BE8" />
-                  <path d="M65 110 Q90 125 115 110" fill="none" stroke="#6E7887" strokeWidth="6" strokeLinecap="round" />
-                </g>
-              );
-            }
-
-            return (
-              <div
-                style={{
-                  position: "absolute",
-                  left: `${x}%`,
-                  top: `${y}%`,
-                  width: 190,
-                  height: 190,
-                  transform: `translate(-50%, -50%) translate(${motion.x}px, ${motion.y}px) rotate(${motion.r}deg) scale(${scale})`,
-                  transformOrigin: "50% 50%",
-                  filter: "drop-shadow(0 14px 10px rgba(20,30,50,.13))",
-                }}
-              >
-                <svg width="190" height="190" viewBox="0 0 190 190">
-                  {graphic}
-                </svg>
-              </div>
-            );
-          }
-
-          function ImpactFX({ beat, localFrame }) {
-            const start = Number(beat.start || 0);
-            const end = Number(beat.end || start + 1);
-            if (localFrame < start * 30 || localFrame > end * 30) return null;
-
-            const p = clamp((localFrame / 30 - start) / Math.max(0.1, end - start));
-            const event = normalizeAction(`${beat.action || ""} ${beat.event || ""}`);
-
-            if (
-              !event.includes("collide") &&
-              !event.includes("impact") &&
-              !event.includes("reveal") &&
-              !event.includes("celebrate") &&
-              !event.includes("surprise")
-            ) {
-              return null;
-            }
-
-            const r = interpolate(p, [0, 1], [20, 130]);
-            const opacity = interpolate(p, [0, 0.2, 1], [0, 0.85, 0]);
-
-            return (
-              <div style={{ position: "absolute", left: "50%", top: "45%", transform: "translate(-50%, -50%)", opacity }}>
-                <svg width="360" height="360" viewBox="0 0 360 360">
-                  <circle cx="180" cy="180" r={r} fill="none" stroke="#FFD75A" strokeWidth="12" />
-                  {[0, 45, 90, 135].map((a) => (
-                    <line
-                      key={a}
-                      x1="180"
-                      y1="180"
-                      x2={180 + Math.cos((a * Math.PI) / 180) * (r + 55)}
-                      y2={180 + Math.sin((a * Math.PI) / 180) * (r + 55)}
-                      stroke="#FFFFFF"
-                      strokeWidth="8"
-                      strokeLinecap="round"
-                    />
-                  ))}
-                </svg>
-              </div>
-            );
+            return <div style={{
+              position:"absolute",inset:-90,
+              transform:`translate(${x}px,${y}px) scale(${scale}) rotate(${rotate}deg)`,
+              transformOrigin:"50% 50%"
+            }}>{children}</div>;
           }
 
           function Captions({ captions, frame }) {
             if (!Array.isArray(captions) || !captions.length) return null;
+            const time=frame/FPS;
+            let idx=captions.findIndex(c=>time>=Number(c.start||0)&&time<=Number(c.end||0));
+            if(idx<0) return null;
 
-            const time = frame / 30;
-            const active = captions.find(
-              (c) => time >= Number(c.start || 0) && time <= Number(c.end || 0)
-            );
+            const from=Math.max(0,idx-2);
+            const to=Math.min(captions.length,idx+3);
+            const visible=captions.slice(from,to);
 
-            if (!active) return null;
-
-            const words = captions.filter(
-              (c) => Math.abs(Number(c.start || 0) - Number(active.start || 0)) < 0.001 &&
-                     Math.abs(Number(c.end || 0) - Number(active.end || 0)) < 0.001
-            );
-
-            return (
-              <div
-                style={{
-                  position: "absolute",
-                  left: 70,
-                  right: 70,
-                  bottom: 90,
-                  display: "flex",
-                  justifyContent: "center",
-                  zIndex: 50,
-                }}
-              >
-                <div
-                  style={{
-                    maxWidth: 900,
-                    padding: "18px 28px",
-                    borderRadius: 22,
-                    background: "rgba(8,14,25,.78)",
-                    color: "#fff",
-                    fontSize: 48,
-                    lineHeight: 1.08,
-                    fontWeight: 800,
-                    fontFamily: "Arial, Helvetica, sans-serif",
-                    textAlign: "center",
-                    boxShadow: "0 10px 30px rgba(0,0,0,.2)",
-                  }}
-                >
-                  {words.length ? words.map((w, i) => (
-                    <span key={i} style={{ marginRight: 10 }}>
-                      {w.word}
-                    </span>
-                  )) : active.text}
-                </div>
+            return <div style={{
+              position:"absolute",left:55,right:55,bottom:78,zIndex:100,
+              display:"flex",justifyContent:"center",pointerEvents:"none"
+            }}>
+              <div style={{
+                maxWidth:940,padding:"17px 24px 19px",
+                borderRadius:24,background:"rgba(8,14,25,.84)",
+                color:"#fff",fontFamily:"Arial,Helvetica,sans-serif",
+                fontSize:46,lineHeight:1.12,fontWeight:800,
+                textAlign:"center",boxShadow:"0 12px 35px rgba(0,0,0,.24)"
+              }}>
+                {visible.map((w,i)=>{
+                  const active=from+i===idx;
+                  return <span key={i} style={{
+                    marginRight:11,
+                    color:active?"#FFD75A":"#FFFFFF",
+                    textShadow:active?"0 2px 0 rgba(0,0,0,.25)":"none"
+                  }}>{w.word}</span>;
+                })}
               </div>
-            );
+            </div>;
           }
 
-          function Scene({ scene, sceneIndex, sceneStart, frame, theme }) {
-            const sceneDuration = Number(scene.duration || 5);
-            const localFrame = frame - Math.round(sceneStart * 30);
-            const localSeconds = localFrame / 30;
-            const progress = clamp(localSeconds / sceneDuration);
-            const beats = Array.isArray(scene.beats) ? scene.beats : [];
+          export function Video({ scenes=[], captions=[], theme={} }) {
+            const frame=useCurrentFrame();
 
-            const activeBeats = beats.filter((b) => {
-              const start = Number(b.start ?? b.time ?? 0);
-              const end = Number(b.end ?? (start + 1.2));
-              return localSeconds >= start && localSeconds <= end;
+            let cursor=0;
+            const timeline=scenes.map((scene,index)=>{
+              const start=cursor;
+              const duration=Number(scene.duration||5);
+              cursor+=duration;
+              return {scene,index,start,duration};
             });
 
-            const camera = scene.camera || "steady";
+            const current=timeline.find(x=>frame>=Math.round(x.start*FPS)&&frame<Math.round((x.start+x.duration)*FPS))
+              || timeline[timeline.length-1];
 
-            return (
-              <AbsoluteFill>
-                <Camera type={camera} progress={progress}>
-                  <Background
-                    setting={scene.setting || ""}
-                    theme={theme || {}}
-                    sceneIndex={sceneIndex}
-                  />
-
-                  {(Array.isArray(scene.objects) ? scene.objects : []).map((object, i) => (
-                    <Prop
-                      key={`object-${i}`}
-                      object={object}
-                      activeBeats={activeBeats}
-                      localFrame={localFrame}
-                      sceneDuration={sceneDuration}
-                      index={i}
-                    />
-                  ))}
-
-                  {(Array.isArray(scene.characters) ? scene.characters : []).map((character, i) => (
-                    <Character
-                      key={`character-${i}`}
-                      character={character}
-                      activeBeats={activeBeats}
-                      localFrame={localFrame}
-                      sceneDuration={sceneDuration}
-                      index={i}
-                    />
-                  ))}
-
-                  {activeBeats.map((beat, i) => (
-                    <ImpactFX key={`fx-${i}`} beat={beat} localFrame={localFrame} />
-                  ))}
-
-                  {scene.text ? (
-                    <div
-                      style={{
-                        position: "absolute",
-                        left: 70,
-                        right: 70,
-                        top: 95,
-                        textAlign: "center",
-                        fontFamily: "Arial, Helvetica, sans-serif",
-                        fontSize: 46,
-                        fontWeight: 800,
-                        color: "#172033",
-                        textShadow: "0 2px 0 rgba(255,255,255,.6)",
-                      }}
-                    >
-                      {scene.text}
-                    </div>
-                  ) : null}
-                </Camera>
-              </AbsoluteFill>
-            );
+            return <AbsoluteFill style={{background:theme?.background||"#EAF0F7"}}>
+              {current && (
+                <SceneRenderer
+                  scene={current.scene}
+                  sceneIndex={current.index}
+                  sceneStart={current.start}
+                  frame={frame}
+                  theme={theme}
+                />
+              )}
+              <Captions captions={captions} frame={frame}/>
+              <Audio src={staticFile("voice.mp3")} volume={1}/>
+            </AbsoluteFill>;
           }
 
-          export function Video({ scenes = [], captions = [], theme = {} }) {
-            const frame = useCurrentFrame();
+          function SceneRenderer({ scene, sceneIndex, sceneStart, frame, theme }) {
+            const localFrame=frame-Math.round(sceneStart*FPS);
+            const localSeconds=localFrame/FPS;
+            const duration=Number(scene.duration||5);
+            const progress=clamp(localSeconds/duration);
+            const beats=Array.isArray(scene.beats)?scene.beats:[];
 
-            let cursor = 0;
-            const items = scenes.map((scene, i) => {
-              const start = cursor;
-              const duration = Number(scene.duration || 5);
-              cursor += duration;
-              return { scene, index: i, start, duration };
-            });
-
-            const current = items.find(
-              (item) =>
-                frame >= Math.round(item.start * 30) &&
-                frame < Math.round((item.start + item.duration) * 30)
-            ) || items[items.length - 1];
-
-            return (
-              <AbsoluteFill style={{ background: PALETTE.bg }}>
-                {current ? (
-                  <Scene
-                    scene={current.scene}
-                    sceneIndex={current.index}
-                    sceneStart={current.start}
-                    frame={frame}
-                    theme={theme}
-                  />
-                ) : null}
-
-                <Captions captions={captions} frame={frame} />
-
-                <Audio src={staticFile("voice.mp3")} volume={1} />
-              </AbsoluteFill>
-            );
+            return <AbsoluteFill>
+              <Camera type={scene.camera} progress={progress}>
+                <Environment setting={scene.setting} sceneIndex={sceneIndex} theme={theme}/>
+                {scene.objects?.map((o,i)=><Object key={o.id||i} object={o} beats={beats} frame={localFrame} index={i}/>)}
+                {scene.characters?.map((c,i)=><Character key={c.id||i} character={c} beats={beats} frame={localFrame} index={i}/>)}
+                <ActionFX beats={beats} frame={localFrame}/>
+                {scene.visual_action && (
+                  <div style={{
+                    position:"absolute",left:70,right:70,top:90,
+                    textAlign:"center",fontFamily:"Arial,Helvetica,sans-serif",
+                    fontSize:34,fontWeight:700,color:theme?.text||C.ink,
+                    opacity:.82
+                  }}>
+                    {scene.text || ""}
+                  </div>
+                )}
+              </Camera>
+            </AbsoluteFill>;
           }
+
           EOF
 
       - name: Save n8n storyboard
@@ -1017,7 +851,7 @@ jobs:
           import json
           from faster_whisper import WhisperModel
 
-          model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
+          model = WhisperModel("base.en", device="cpu", compute_type="int8")
 
           segments, _ = model.transcribe(
               "public/voice.mp3",
