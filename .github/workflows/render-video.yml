@@ -8,417 +8,1081 @@ on:
         required: true
         type: string
       scenes:
-        description: "Rich scene plan JSON"
+        description: "JSON storyboard from n8n"
         required: true
         type: string
       title:
         description: "Video title"
-        required: false
-        default: "AI Cartoon Video"
+        required: true
         type: string
       theme:
         description: "Theme JSON"
         required: false
-        default: '{"background":"#111827","accent":"#7c3aed","text":"#ffffff"}'
+        default: "{}"
         type: string
-
-permissions:
-  contents: write
 
 jobs:
   render:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 25
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install system tools
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system packages
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
-          ffmpeg -version
-          node --version
-          python3 --version
 
       - name: Create self-contained Remotion project
         shell: bash
-        env:
-          SCRIPT_TEXT: ${{ inputs.script }}
-          SCENES_JSON: ${{ inputs.scenes }}
-          VIDEO_TITLE: ${{ inputs.title }}
-          THEME_JSON: ${{ inputs.theme }}
         run: |
           set -euo pipefail
-          rm -rf ai-video
-          mkdir -p ai-video/src
-          cd ai-video
 
-          cat > package.json <<'EOF'
+          rm -rf ai-video
+          mkdir -p ai-video/src ai-video/public ai-video/out
+
+          cat > ai-video/package.json <<'EOF'
           {
             "private": true,
             "scripts": {
-              "render": "remotion render src/index.jsx Main out.mp4 --props=props.json",
-              "typecheck": "esbuild src/index.jsx src/Video.jsx --bundle --format=esm --outdir=.syntax-check --external:react --external:react-dom --external:remotion"
+              "render": "remotion render src/index.jsx Main out/video.mp4 --props=props.json"
             },
             "dependencies": {
               "@remotion/cli": "4.0.529",
-              "react": "18.3.1",
-              "react-dom": "18.3.1",
               "remotion": "4.0.529",
-              "esbuild": "0.25.9"
+              "react": "18.3.1",
+              "react-dom": "18.3.1"
             }
           }
           EOF
 
-          cat > src/index.jsx <<'EOF'
+          cat > ai-video/src/index.jsx <<'EOF'
           import React from "react";
           import { registerRoot, Composition } from "remotion";
-          import { Video } from "./Video.jsx";
+          import { Video } from "./Video";
 
-          export const RemotionRoot = () => (
-            <Composition
-              id="Main"
-              component={Video}
-              durationInFrames={30 * 34}
-              fps={30}
-              calculateMetadata={({ props }) => ({
-                durationInFrames: Math.max(1, Math.ceil((props.scenes || []).reduce((sum, s) => sum + (Number(s.duration) || 4), 0) * 30))
-              })}
-              width={1080}
-              height={1920}
-              defaultProps={{ scenes: [], captions: [], theme: {} }}
-            />
-          );
+          const FPS = 30;
 
-          registerRoot(RemotionRoot);
+          function getDurationInFrames(props) {
+            const scenes = Array.isArray(props?.scenes) ? props.scenes : [];
+            const seconds = scenes.reduce(
+              (sum, scene) => sum + Number(scene.duration || 5),
+              0
+            );
+            return Math.max(1, Math.round(seconds * FPS));
+          }
+
+          function Root() {
+            return (
+              <Composition
+                id="Main"
+                component={Video}
+                durationInFrames={180}
+                fps={FPS}
+                width={1080}
+                height={1920}
+                defaultProps={{ scenes: [], captions: [], title: "", theme: {} }}
+                calculateMetadata={({ props }) => ({
+                  durationInFrames: getDurationInFrames(props),
+                  fps: FPS,
+                  width: 1080,
+                  height: 1920,
+                })}
+              />
+            );
+          }
+
+          registerRoot(Root);
           EOF
 
-          cat > src/Video.jsx <<'EOF'
-          import React, { useMemo } from "react";
+          cat > ai-video/src/Video.jsx <<'EOF'
+          import React from "react";
           import {
             AbsoluteFill,
             Audio,
-            staticFile,
             interpolate,
-            spring,
+            Sequence,
+            staticFile,
             useCurrentFrame,
-            useVideoConfig
+            useVideoConfig,
           } from "remotion";
 
-          const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-          const hash = (s) => {
+          const W = 1080;
+          const H = 1920;
+
+          const PALETTE = {
+            ink: "#172033",
+            skin: "#F2B38D",
+            skin2: "#D99068",
+            shirt: "#4E6BE8",
+            shirt2: "#344BB8",
+            pants: "#24314D",
+            hair: "#2A1C20",
+            white: "#FFFFFF",
+            paper: "#F7F3EA",
+            yellow: "#FFD75A",
+            orange: "#F18B54",
+            green: "#63B98B",
+            blue: "#69A9E8",
+            red: "#E76565",
+            purple: "#8D76D9",
+            grey: "#AAB3C1",
+            darkGrey: "#667085",
+            bg: "#EAF0F7",
+          };
+
+          const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+
+          function hash(str = "") {
             let h = 2166136261;
-            for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
-            return Math.abs(h >>> 0);
-          };
-
-          const EMOJI = {
-            person: "🧑", phone: "📱", laptop: "💻", coffee: "☕", clock: "⏰",
-            book: "📖", money: "💰", brain: "🧠", heart: "❤️", star: "⭐",
-            lightbulb: "💡", rocket: "🚀", moon: "🌙", mountain: "⛰️",
-            city: "🏙️", car: "🚗", house: "🏠", tree: "🌳", cloud: "☁️",
-            fire: "🔥", trophy: "🏆", magnify: "🔎", chart: "📈", warning: "⚠️",
-            globe: "🌍", food: "🍎", bed: "🛏️", school: "🏫", dumbbell: "🏋️",
-            water: "💧", fish: "🐟", whale: "🐋", lock: "🔒", key: "🔑"
-          };
-
-          const objectEmoji = (o) => {
-            if (o.emoji) return o.emoji;
-            const k = String(o.id || o.type || "").toLowerCase();
-            return EMOJI[k] || "●";
-          };
-
-          function Background({ theme, sceneIndex }) {
-            const bg = theme.background || "#111827";
-            const accent = theme.accent || "#7c3aed";
-            const frame = useCurrentFrame();
-            const drift = Math.sin(frame / 55 + sceneIndex) * 18;
-            return (
-              <AbsoluteFill style={{
-                background: `radial-gradient(circle at ${35 + drift / 10}% 20%, ${accent}44, transparent 35%), ${bg}`,
-                overflow: "hidden"
-              }}>
-                <div style={{
-                  position:"absolute", width:700, height:700, borderRadius:"50%",
-                  background: accent, opacity:.07, filter:"blur(8px)",
-                  left:-240 + drift, top:180
-                }}/>
-                <div style={{
-                  position:"absolute", width:520, height:520, borderRadius:"50%",
-                  border:`2px solid ${accent}22`, right:-180, bottom:300
-                }}/>
-              </AbsoluteFill>
-            );
+            for (let i = 0; i < str.length; i++) {
+              h ^= str.charCodeAt(i);
+              h = Math.imul(h, 16777619);
+            }
+            return Math.abs(h);
           }
 
-          function CartoonObject({ object, index, sceneKey, startFrame, endFrame }) {
-            const frame = useCurrentFrame();
-            const total = Math.max(1, endFrame - startFrame);
-            const local = clamp((frame - startFrame) / total, 0, 1);
-            const seed = hash(`${sceneKey}-${index}-${objectEmoji(object)}`);
-            const from = Array.isArray(object.from) ? object.from : [50, 50];
-            const to = Array.isArray(object.to) ? object.to : from;
-            const x = interpolate(local, [0,1], [from[0], to[0]]);
-            const y = interpolate(local, [0,1], [from[1], to[1]]);
-            const entrance = spring({ frame: Math.max(0, frame - startFrame - (object.delay || 0)), fps:30, config:{damping:16, stiffness:140, mass:.7} });
-            const wobble = Math.sin((frame + seed % 90) / 9) * 2.2;
-            const scale = interpolate(clamp(entrance,0,1), [0,1], [.65,1]);
-            const size = clamp(Number(object.size) || 170, 90, 280);
-            const rotation = interpolate(local, [0,1], [0, Number(object.spin)||0]) + wobble;
-            const opacity = interpolate(clamp(entrance,0,1), [0,1], [0,1]);
+          function ease(t) {
+            return t < 0.5
+              ? 4 * t * t * t
+              : 1 - Math.pow(-2 * t + 2, 3) / 2;
+          }
+
+          function normalizeAction(value = "") {
+            return String(value)
+              .toLowerCase()
+              .replace(/[-\s]+/g, "_");
+          }
+
+          function actionTransform(action, p, seed) {
+            const a = normalizeAction(action);
+            const s = (seed % 997) / 997;
+
+            if (a.includes("jump") || a.includes("hop")) {
+              return {
+                x: Math.sin(p * Math.PI) * 20,
+                y: -Math.sin(p * Math.PI) * 90,
+                r: Math.sin(p * Math.PI * 2) * 3,
+                scale: 1 + Math.sin(p * Math.PI) * 0.04,
+              };
+            }
+
+            if (a.includes("run") || a.includes("walk") || a.includes("move")) {
+              return {
+                x: interpolate(p, [0, 1], [-90, 90]),
+                y: Math.sin(p * Math.PI * 4 + s * 4) * 7,
+                r: Math.sin(p * Math.PI * 4) * 2,
+                scale: 1,
+              };
+            }
+
+            if (a.includes("shake") || a.includes("vibrate")) {
+              return {
+                x: Math.sin(p * Math.PI * 12) * 9,
+                y: Math.cos(p * Math.PI * 10) * 4,
+                r: Math.sin(p * Math.PI * 10) * 2,
+                scale: 1,
+              };
+            }
+
+            if (a.includes("grow") || a.includes("reveal")) {
+              return {
+                x: 0,
+                y: 0,
+                r: 0,
+                scale: interpolate(p, [0, 1], [0.75, 1]),
+              };
+            }
+
+            if (a.includes("fall") || a.includes("drop")) {
+              return {
+                x: 0,
+                y: interpolate(ease(p), [0, 1], [-120, 100]),
+                r: interpolate(p, [0, 1], [0, 18]),
+                scale: 1,
+              };
+            }
+
+            if (a.includes("fly")) {
+              return {
+                x: interpolate(p, [0, 1], [-160, 160]),
+                y: -Math.sin(p * Math.PI) * 110,
+                r: interpolate(p, [0, 1], [-10, 10]),
+                scale: 1,
+              };
+            }
+
+            if (a.includes("celebrate")) {
+              return {
+                x: Math.sin(p * Math.PI * 4) * 8,
+                y: -Math.abs(Math.sin(p * Math.PI * 2)) * 35,
+                r: Math.sin(p * Math.PI * 3) * 4,
+                scale: 1 + Math.abs(Math.sin(p * Math.PI * 2)) * 0.04,
+              };
+            }
+
+            if (a.includes("think") || a.includes("look") || a.includes("search")) {
+              return {
+                x: Math.sin(p * Math.PI * 2) * 14,
+                y: 0,
+                r: Math.sin(p * Math.PI * 2) * 1.5,
+                scale: 1,
+              };
+            }
+
+            if (a.includes("point")) {
+              return {
+                x: 8,
+                y: -3,
+                r: 0,
+                scale: 1.015,
+              };
+            }
+
+            return {
+              x: Math.sin(p * Math.PI * 2 + s * 5) * 3,
+              y: Math.sin(p * Math.PI * 3 + s * 2) * 2,
+              r: Math.sin(p * Math.PI * 2) * 0.8,
+              scale: 1,
+            };
+          }
+
+          function Camera({ type, progress, children }) {
+            const t = clamp(progress);
+            const c = normalizeAction(type);
+
+            let scale = 1;
+            let x = 0;
+            let y = 0;
+            let rotate = 0;
+
+            if (c.includes("push_in") || c === "push") {
+              scale = interpolate(t, [0, 1], [1, 1.055]);
+            } else if (c.includes("pull_out") || c === "pull") {
+              scale = interpolate(t, [0, 1], [1.055, 1]);
+            } else if (c.includes("pan_left")) {
+              x = interpolate(t, [0, 1], [35, -35]);
+              scale = 1.025;
+            } else if (c.includes("pan_right")) {
+              x = interpolate(t, [0, 1], [-35, 35]);
+              scale = 1.025;
+            } else if (c.includes("tilt_up")) {
+              y = interpolate(t, [0, 1], [25, -25]);
+              scale = 1.025;
+            } else if (c.includes("tilt_down")) {
+              y = interpolate(t, [0, 1], [-25, 25]);
+              scale = 1.025;
+            } else if (c.includes("shake")) {
+              x = Math.sin(t * Math.PI * 18) * 5;
+              y = Math.cos(t * Math.PI * 16) * 3;
+              rotate = Math.sin(t * Math.PI * 12) * 0.5;
+              scale = 1.02;
+            } else if (c.includes("reveal")) {
+              scale = interpolate(t, [0, 1], [1.04, 1]);
+              y = interpolate(t, [0, 1], [35, 0]);
+            } else if (c.includes("follow")) {
+              x = Math.sin(t * Math.PI * 2) * 18;
+              scale = 1.035;
+            }
 
             return (
-              <div style={{
-                position:"absolute",
-                left:`${x}%`, top:`${y}%`,
-                transform:`translate(-50%,-50%) rotate(${rotation}deg) scale(${scale})`,
-                opacity,
-                fontSize:size,
-                lineHeight:1,
-                filter:"drop-shadow(0 14px 12px rgba(0,0,0,.22))",
-                zIndex:20 + index
-              }}>
-                {objectEmoji(object)}
+              <div
+                style={{
+                  position: "absolute",
+                  inset: -80,
+                  transform: `translate(${x}px, ${y}px) scale(${scale}) rotate(${rotate}deg)`,
+                  transformOrigin: "50% 50%",
+                }}
+              >
+                {children}
               </div>
             );
           }
 
-          function CartoonCharacter({ character, index, sceneIndex, startFrame, endFrame }) {
-            const frame = useCurrentFrame();
-            const seed = hash(`${sceneIndex}-${index}-${character.role || "character"}`);
-            const p = clamp((frame-startFrame)/Math.max(1,endFrame-startFrame),0,1);
-            const x = 22 + ((seed % 55) + p * ((seed % 2 ? 18 : -18)));
-            const y = 54 + Math.sin(frame/14 + index) * 2;
-            const skin = ["#F6C7A5","#E8A87C","#D69B73"][seed%3];
-            return (
-              <div style={{
-                position:"absolute", left:`${x}%`, top:`${y}%`,
-                transform:"translate(-50%,-50%)",
-                zIndex:30 + index
-              }}>
-                <div style={{
-                  width:116,height:116,borderRadius:"50%",background:skin,
-                  border:"6px solid #111827",boxSizing:"border-box",
-                  display:"flex",alignItems:"center",justifyContent:"center",
-                  fontSize:66,boxShadow:"0 18px 30px rgba(0,0,0,.25)"
-                }}>🙂</div>
-                <div style={{
-                  width:145,height:175,borderRadius:"42% 42% 28% 28%",
-                  background:["#5B21B6","#0F766E","#B45309","#1D4ED8"][seed%4],
-                  border:"6px solid #111827",margin:"-5px auto 0",
-                  boxShadow:"0 18px 30px rgba(0,0,0,.22)"
-                }}/>
-              </div>
-            );
-          }
+          function Background({ setting = "", theme = {}, sceneIndex = 0 }) {
+            const s = String(setting).toLowerCase();
+            const isNight = s.includes("night") || s.includes("space");
+            const bg = theme?.background || (isNight ? "#18213B" : PALETTE.bg);
+            const accent = theme?.accent || "#6C7FEA";
 
-          function Beat({ beat, index, sceneStart, sceneEnd, sceneKey }) {
-            const frame = useCurrentFrame();
-            const start = sceneStart + Math.round((Number(beat.start) || index * 0.8) * 30);
-            const end = sceneStart + Math.round((Number(beat.end) || (index+1) * 0.8) * 30);
-            const active = frame >= start && frame <= end;
-            const progress = clamp((frame-start)/Math.max(1,end-start),0,1);
-            if (!active && frame < start) return null;
-            const scale = spring({frame:Math.max(0,frame-start),fps:30,config:{damping:13,stiffness:170}});
-            const label = beat.label || beat.event || "";
-            if (!label) return null;
             return (
-              <div style={{
-                position:"absolute",left:"50%",top:"18%",
-                transform:`translate(-50%,-50%) scale(${clamp(scale,0,1)})`,
-                opacity:active ? 1 : .15,zIndex:80,
-                maxWidth:"86%",textAlign:"center",
-                fontFamily:"Arial, sans-serif",fontWeight:900,
-                fontSize:58,color:"#fff",
-                textShadow:"0 5px 18px rgba(0,0,0,.35)",
-                letterSpacing:-1
-              }}>
-                {label}
-              </div>
-            );
-          }
+              <AbsoluteFill
+                style={{
+                  background: bg,
+                  overflow: "hidden",
+                }}
+              >
+                <svg
+                  width="100%"
+                  height="100%"
+                  viewBox={`0 0 ${W} ${H}`}
+                  preserveAspectRatio="none"
+                >
+                  <defs>
+                    <linearGradient id={`sky-${sceneIndex}`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={isNight ? "#17213A" : "#DCEAF8"} />
+                      <stop offset="100%" stopColor={isNight ? "#273657" : "#F6F3EA"} />
+                    </linearGradient>
+                    <filter id={`shadow-${sceneIndex}`} x="-30%" y="-30%" width="160%" height="160%">
+                      <feDropShadow dx="0" dy="12" stdDeviation="15" floodOpacity="0.12" />
+                    </filter>
+                  </defs>
 
-          function Scene({ scene, index, startFrame, endFrame, theme }) {
-            const frame = useCurrentFrame();
-            const sceneKey = `${index}-${scene.id || scene.narration || ""}`;
-            const camera = scene.camera || "stable";
-            const progress = clamp((frame-startFrame)/Math.max(1,endFrame-startFrame),0,1);
-            const zoom = camera === "push" ? interpolate(progress,[0,1],[1,1.08]) :
-                         camera === "pull" ? interpolate(progress,[0,1],[1.08,1]) : 1;
-            const characters = Array.isArray(scene.characters) ? scene.characters : [];
-            const objects = Array.isArray(scene.objects) ? scene.objects : [];
-            const beats = Array.isArray(scene.beats) ? scene.beats : [];
-            return (
-              <AbsoluteFill>
-                <Background theme={theme} sceneIndex={index}/>
-                <AbsoluteFill style={{transform:`scale(${zoom})`}}>
-                  {objects.slice(0,14).map((o,i)=>
-                    <CartoonObject key={i} object={o} index={i} sceneKey={sceneKey} startFrame={startFrame} endFrame={endFrame}/>
+                  <rect width={W} height={H} fill={`url(#sky-${sceneIndex})`} />
+
+                  {isNight ? (
+                    <>
+                      {[80, 190, 320, 510, 700, 850, 970].map((x, i) => (
+                        <circle key={i} cx={x} cy={180 + ((i * 83) % 420)} r="5" fill="#FFFFFF" opacity="0.65" />
+                      ))}
+                      <circle cx="860" cy="250" r="74" fill="#F6E9B7" opacity="0.9" />
+                    </>
+                  ) : (
+                    <>
+                      <circle cx="860" cy="240" r="88" fill="#FFD978" opacity="0.95" />
+                      <path d="M0 1190 Q220 1010 450 1170 T1080 1090 V1920 H0Z" fill="#D6E5D5" />
+                    </>
                   )}
-                  {characters.slice(0,5).map((c,i)=>
-                    <CartoonCharacter key={i} character={c} index={i} sceneIndex={index} startFrame={startFrame} endFrame={endFrame}/>
+
+                  {s.includes("office") && (
+                    <>
+                      <rect x="0" y="1130" width={W} height="790" fill="#D9D1C7" />
+                      <rect x="85" y="250" width="360" height="360" rx="25" fill="#9FC4DC" filter={`url(#shadow-${sceneIndex})`} />
+                      <rect x="120" y="285" width="290" height="290" rx="10" fill="#BDE0F1" />
+                      <rect x="610" y="410" width="300" height="70" rx="18" fill={accent} opacity="0.8" />
+                      <rect x="600" y="480" width="320" height="550" rx="25" fill="#EEE9E1" />
+                    </>
                   )}
-                  {beats.slice(0,10).map((b,i)=>
-                    <Beat key={i} beat={b} index={i} sceneStart={startFrame} sceneEnd={endFrame} sceneKey={sceneKey}/>
+
+                  {s.includes("bedroom") && (
+                    <>
+                      <rect x="0" y="1260" width={W} height="660" fill="#D8C9C0" />
+                      <rect x="130" y="900" width="820" height="400" rx="40" fill="#A88C82" />
+                      <rect x="190" y="1010" width="700" height="300" rx="32" fill="#F4EEE7" />
+                      <rect x="130" y="550" width="210" height="360" rx="20" fill="#D2B69F" />
+                    </>
                   )}
-                  {scene.text ? (
-                    <div style={{
-                      position:"absolute",left:"8%",right:"8%",bottom:"24%",
-                      textAlign:"center",fontFamily:"Arial,sans-serif",
-                      fontWeight:900,fontSize:52,color:theme.text||"#fff",
-                      zIndex:100,textShadow:"0 5px 18px rgba(0,0,0,.4)"
-                    }}>{scene.text}</div>
+
+                  {s.includes("kitchen") && (
+                    <>
+                      <rect x="0" y="1150" width={W} height="770" fill="#D7D8D2" />
+                      <rect x="80" y="680" width="920" height="500" rx="20" fill="#F1EFE8" />
+                      <rect x="130" y="760" width="230" height="280" rx="18" fill="#BFC7CE" />
+                      <rect x="650" y="760" width="270" height="280" rx="18" fill="#AAB5BE" />
+                    </>
+                  )}
+
+                  {s.includes("classroom") && (
+                    <>
+                      <rect x="0" y="1150" width={W} height="770" fill="#CDBEAA" />
+                      <rect x="80" y="270" width="920" height="520" rx="22" fill="#46505A" />
+                      <rect x="120" y="310" width="840" height="440" fill="#56616B" />
+                      <line x1="200" y1="480" x2="520" y2="480" stroke="#F5F0DF" strokeWidth="10" opacity="0.8" />
+                      <line x1="250" y1="610" x2="700" y2="610" stroke="#F5F0DF" strokeWidth="10" opacity="0.65" />
+                    </>
+                  )}
+
+                  {s.includes("gym") && (
+                    <>
+                      <rect x="0" y="1120" width={W} height="800" fill="#313A46" />
+                      <rect x="80" y="250" width="920" height="570" rx="25" fill="#4C5865" />
+                      <circle cx="180" cy="420" r="90" fill="#677482" opacity="0.8" />
+                      <rect x="650" y="420" width="240" height="30" rx="15" fill="#1C2330" />
+                    </>
+                  )}
+
+                  {s.includes("street") || s.includes("city") ? (
+                    <>
+                      <rect x="0" y="1120" width={W} height="800" fill="#6D747D" />
+                      {[80, 300, 540, 780, 980].map((x, i) => (
+                        <rect key={i} x={x} y={550 - i * 35} width="140" height={570 + i * 35} fill={i % 2 ? "#9CA7B1" : "#87939E"} />
+                      ))}
+                      <rect x="0" y="1390" width={W} height="18" fill="#F5D46A" />
+                    </>
                   ) : null}
-                </AbsoluteFill>
+
+                  {s.includes("forest") && (
+                    <>
+                      <rect x="0" y="1250" width={W} height="670" fill="#9BC58D" />
+                      {[90, 300, 540, 770, 970].map((x, i) => (
+                        <g key={i}>
+                          <rect x={x} y="600" width="34" height="680" fill="#75533C" />
+                          <circle cx={x + 17} cy="570" r={125 + (i % 2) * 25} fill={i % 2 ? "#6CA36B" : "#82B878"} />
+                        </g>
+                      ))}
+                    </>
+                  )}
+
+                  {s.includes("space") && (
+                    <>
+                      <circle cx="250" cy="480" r="130" fill="#5967B6" opacity="0.65" />
+                      <circle cx="800" cy="920" r="190" fill="#6C4EA3" opacity="0.5" />
+                      <path d="M0 1320 Q280 1220 560 1320 T1080 1280 V1920 H0Z" fill="#222B52" />
+                    </>
+                  )}
+
+                  {!(
+                    s.includes("office") ||
+                    s.includes("bedroom") ||
+                    s.includes("kitchen") ||
+                    s.includes("classroom") ||
+                    s.includes("gym") ||
+                    s.includes("street") ||
+                    s.includes("city") ||
+                    s.includes("forest") ||
+                    s.includes("space")
+                  ) && (
+                    <>
+                      <rect x="0" y="1220" width={W} height="700" fill="#D8D1C5" />
+                      <path d="M0 1240 Q270 1130 540 1220 T1080 1180 V1920 H0Z" fill="#C8D5C8" />
+                    </>
+                  )}
+                </svg>
               </AbsoluteFill>
             );
           }
 
-          function Captions({ captions }) {
-            const frame = useCurrentFrame();
-            const t = frame / 30;
-            const current = captions.find(c => t >= c.start && t <= c.end);
-            if (!current) return null;
+          function Character({ character = {}, activeBeats = [], localFrame, sceneDuration, index }) {
+            const name = character.name || `character-${index}`;
+            const role = String(character.role || "").toLowerCase();
+            const color = character.color || PALETTE.shirt;
+            const hair = character.hair || PALETTE.hair;
+            const skin = character.skin || PALETTE.skin;
+            const baseX = Number(character.x ?? (25 + index * 28));
+            const baseY = Number(character.y ?? 72);
+            const seed = hash(name + index);
+
+            let motion = { x: 0, y: 0, r: 0, scale: 1 };
+
+            for (const beat of activeBeats) {
+              const start = Number(beat.start || 0);
+              const end = Number(beat.end || sceneDuration);
+              if (localFrame >= start * 30 && localFrame <= end * 30) {
+                const p = clamp((localFrame / 30 - start) / Math.max(0.1, end - start));
+                motion = actionTransform(beat.action || beat.event || "", p, seed);
+              }
+            }
+
+            const bob = Math.sin((localFrame / 30) * 2.2 + seed) * 2;
+            const faceTilt = Math.sin((localFrame / 30) * 1.4 + seed) * 1.2;
+
             return (
-              <div style={{
-                position:"absolute",left:"6%",right:"6%",bottom:"7%",
-                display:"flex",justifyContent:"center",zIndex:300,
-                fontFamily:"Arial,sans-serif",fontWeight:900
-              }}>
-                <div style={{
-                  background:"rgba(0,0,0,.78)",padding:"14px 22px",
-                  borderRadius:22,color:"#fff",fontSize:45,
-                  lineHeight:1.08,textAlign:"center",
-                  boxShadow:"0 10px 30px rgba(0,0,0,.28)"
-                }}>
-                  {current.word}
+              <div
+                style={{
+                  position: "absolute",
+                  left: `${baseX}%`,
+                  top: `${baseY}%`,
+                  width: 210,
+                  height: 420,
+                  transform: `translate(-50%, -100%) translate(${motion.x}px, ${motion.y + bob}px) rotate(${motion.r}deg) scale(${motion.scale})`,
+                  transformOrigin: "50% 100%",
+                  filter: "drop-shadow(0 18px 12px rgba(20,30,50,.16))",
+                }}
+              >
+                <svg width="210" height="420" viewBox="0 0 210 420">
+                  <g transform={`rotate(${faceTilt} 105 105)`}>
+                    <circle cx="105" cy="105" r="82" fill={skin} />
+                    <path
+                      d="M31 91 Q44 18 108 22 Q169 21 181 91 Q155 62 121 65 Q78 67 31 91Z"
+                      fill={hair}
+                    />
+                    <ellipse cx="75" cy="105" rx="8" ry="12" fill={PALETTE.ink} />
+                    <ellipse cx="136" cy="105" rx="8" ry="12" fill={PALETTE.ink} />
+                    <path d="M87 142 Q105 154 125 140" fill="none" stroke={PALETTE.ink} strokeWidth="7" strokeLinecap="round" />
+                    <circle cx="60" cy="135" r="10" fill="#E88D88" opacity="0.35" />
+                    <circle cx="150" cy="135" r="10" fill="#E88D88" opacity="0.35" />
+                  </g>
+
+                  <path d="M48 194 Q105 165 162 194 L177 315 Q105 345 33 315Z" fill={color} />
+                  <path d="M42 212 Q5 250 20 312" fill="none" stroke={skin} strokeWidth="28" strokeLinecap="round" />
+                  <path d="M168 212 Q205 250 190 312" fill="none" stroke={skin} strokeWidth="28" strokeLinecap="round" />
+                  <path d="M67 315 L57 397" stroke={PALETTE.pants} strokeWidth="35" strokeLinecap="round" />
+                  <path d="M143 315 L153 397" stroke={PALETTE.pants} strokeWidth="35" strokeLinecap="round" />
+                  <path d="M37 401 L77 401" stroke={PALETTE.ink} strokeWidth="24" strokeLinecap="round" />
+                  <path d="M133 401 L173 401" stroke={PALETTE.ink} strokeWidth="24" strokeLinecap="round" />
+
+                  {role.includes("manager") || role.includes("leader") ? (
+                    <path d="M55 194 L105 156 L155 194" fill="none" stroke="#F5F0E6" strokeWidth="18" />
+                  ) : null}
+                </svg>
+              </div>
+            );
+          }
+
+          function Prop({ object = {}, activeBeats = [], localFrame, sceneDuration, index }) {
+            const id = String(object.id || object.type || `object-${index}`);
+            const type = String(object.type || object.id || "object").toLowerCase();
+            const x = Number(object.x ?? (18 + (index * 23) % 70));
+            const y = Number(object.y ?? (42 + (index * 17) % 35));
+            const seed = hash(id + index);
+
+            let motion = { x: 0, y: 0, r: 0, scale: 1 };
+
+            for (const beat of activeBeats) {
+              const target = String(beat.object || "").toLowerCase();
+              if (target && !id.toLowerCase().includes(target) && !type.includes(target)) continue;
+              const start = Number(beat.start || 0);
+              const end = Number(beat.end || sceneDuration);
+              if (localFrame >= start * 30 && localFrame <= end * 30) {
+                const p = clamp((localFrame / 30 - start) / Math.max(0.1, end - start));
+                motion = actionTransform(beat.action || beat.event || "", p, seed);
+              }
+            }
+
+            const scale = Number(object.scale || 1) * motion.scale;
+
+            let graphic = null;
+
+            if (type.includes("phone") || type.includes("mobile")) {
+              graphic = (
+                <g>
+                  <rect x="20" y="10" width="100" height="190" rx="18" fill="#202A3A" />
+                  <rect x="30" y="25" width="80" height="145" rx="10" fill="#8FC7F2" />
+                  <circle cx="70" cy="185" r="7" fill="#D6DEE8" />
+                </g>
+              );
+            } else if (type.includes("laptop") || type.includes("computer")) {
+              graphic = (
+                <g>
+                  <rect x="10" y="20" width="150" height="100" rx="12" fill="#344254" />
+                  <rect x="22" y="32" width="126" height="76" rx="6" fill="#A9D7EE" />
+                  <path d="M0 125 L175 125 L158 145 L18 145Z" fill="#738092" />
+                </g>
+              );
+            } else if (type.includes("clock")) {
+              graphic = (
+                <g>
+                  <circle cx="80" cy="80" r="70" fill="#FFF8E9" stroke="#354052" strokeWidth="10" />
+                  <line x1="80" y1="80" x2="80" y2="40" stroke="#354052" strokeWidth="8" strokeLinecap="round" />
+                  <line x1="80" y1="80" x2="112" y2="95" stroke="#354052" strokeWidth="8" strokeLinecap="round" />
+                </g>
+              );
+            } else if (type.includes("coffee") || type.includes("cup")) {
+              graphic = (
+                <g>
+                  <path d="M25 45 L120 45 L108 145 Q70 165 37 145Z" fill="#F5F0E8" stroke="#394657" strokeWidth="8" />
+                  <path d="M120 70 Q170 60 150 115 Q138 132 113 123" fill="none" stroke="#394657" strokeWidth="9" />
+                  <path d="M50 25 Q40 0 58 0 M80 25 Q70 0 88 0" stroke="#FFFFFF" strokeWidth="8" strokeLinecap="round" opacity="0.8" />
+                </g>
+              );
+            } else if (type.includes("book")) {
+              graphic = (
+                <g>
+                  <path d="M10 35 Q55 15 90 35 L90 150 Q50 130 10 150Z" fill="#F3E6C7" stroke="#6A5A4B" strokeWidth="7" />
+                  <path d="M90 35 Q125 15 170 35 L170 150 Q130 130 90 150Z" fill="#FFF4D9" stroke="#6A5A4B" strokeWidth="7" />
+                  <line x1="35" y1="70" x2="70" y2="65" stroke="#A08B70" strokeWidth="6" />
+                  <line x1="110" y1="65" x2="145" y2="70" stroke="#A08B70" strokeWidth="6" />
+                </g>
+              );
+            } else if (type.includes("brain")) {
+              graphic = (
+                <g>
+                  <path d="M65 25 Q30 10 25 55 Q0 75 25 105 Q12 140 50 145 Q65 175 90 150 Q120 170 130 140 Q165 135 145 105 Q170 75 140 55 Q135 15 100 28 Q85 5 65 25Z" fill="#DCA6E9" stroke="#563D68" strokeWidth="7" />
+                  <path d="M70 45 Q55 70 72 88 Q50 105 68 125 M103 42 Q90 65 110 82 Q92 100 108 122" fill="none" stroke="#8D5B9B" strokeWidth="7" strokeLinecap="round" />
+                </g>
+              );
+            } else if (type.includes("heart")) {
+              graphic = (
+                <path d="M80 145 L18 78 Q0 45 30 25 Q58 8 80 40 Q102 8 130 25 Q160 45 142 78Z" fill="#E96B73" stroke="#9F3F49" strokeWidth="7" />
+              );
+            } else if (type.includes("lightbulb") || type.includes("idea")) {
+              graphic = (
+                <g>
+                  <path d="M80 15 Q35 15 35 62 Q35 92 58 110 L58 132 L102 132 L102 110 Q125 92 125 62 Q125 15 80 15Z" fill="#FFD75A" stroke="#A2761F" strokeWidth="7" />
+                  <path d="M60 150 L100 150" stroke="#5B6574" strokeWidth="10" strokeLinecap="round" />
+                </g>
+              );
+            } else if (type.includes("rocket")) {
+              graphic = (
+                <g>
+                  <path d="M80 10 Q140 45 110 130 L80 160 L50 130 Q20 45 80 10Z" fill="#F1F3F7" stroke="#495568" strokeWidth="7" />
+                  <circle cx="80" cy="75" r="18" fill="#77B9E8" stroke="#495568" strokeWidth="6" />
+                  <path d="M50 118 L15 145 L48 145 M110 118 L145 145 L112 145" fill="#E87964" stroke="#9B4A3D" strokeWidth="5" />
+                  <path d="M65 155 L80 190 L95 155" fill="#FFD15B" />
+                </g>
+              );
+            } else if (type.includes("chart") || type.includes("graph")) {
+              graphic = (
+                <g>
+                  <rect x="10" y="10" width="170" height="145" rx="12" fill="#F9F8F2" stroke="#7D8796" strokeWidth="6" />
+                  <polyline points="30,125 65,95 92,108 125,55 160,35" fill="none" stroke="#4E6BE8" strokeWidth="10" strokeLinecap="round" strokeLinejoin="round" />
+                </g>
+              );
+            } else if (type.includes("trophy") || type.includes("award")) {
+              graphic = (
+                <g>
+                  <path d="M55 35 L115 35 L108 105 Q85 125 62 105Z" fill="#FFD35A" stroke="#9A7620" strokeWidth="7" />
+                  <path d="M55 55 Q15 45 25 90 Q35 110 62 98 M115 55 Q155 45 145 90 Q135 110 108 98" fill="none" stroke="#9A7620" strokeWidth="9" />
+                  <rect x="78" y="110" width="14" height="35" fill="#9A7620" />
+                  <rect x="50" y="145" width="70" height="15" rx="7" fill="#9A7620" />
+                </g>
+              );
+            } else if (type.includes("tree")) {
+              graphic = (
+                <g>
+                  <rect x="72" y="100" width="22" height="90" fill="#76533E" />
+                  <circle cx="82" cy="75" r="65" fill="#6DAA6E" />
+                  <circle cx="42" cy="90" r="42" fill="#80B879" />
+                  <circle cx="125" cy="90" r="45" fill="#5E9D65" />
+                </g>
+              );
+            } else if (type.includes("car")) {
+              graphic = (
+                <g>
+                  <path d="M25 100 L45 55 L140 55 L165 100 L175 135 L15 135Z" fill="#E16A63" stroke="#753D3A" strokeWidth="7" />
+                  <circle cx="50" cy="138" r="20" fill="#263243" />
+                  <circle cx="140" cy="138" r="20" fill="#263243" />
+                  <rect x="62" y="70" width="60" height="30" rx="8" fill="#A8D4EA" />
+                </g>
+              );
+            } else {
+              graphic = (
+                <g>
+                  <rect x="20" y="30" width="140" height="110" rx="24" fill="#FFFFFF" stroke="#6E7887" strokeWidth="7" />
+                  <circle cx="65" cy="80" r="9" fill="#4E6BE8" />
+                  <circle cx="115" cy="80" r="9" fill="#4E6BE8" />
+                  <path d="M65 110 Q90 125 115 110" fill="none" stroke="#6E7887" strokeWidth="6" strokeLinecap="round" />
+                </g>
+              );
+            }
+
+            return (
+              <div
+                style={{
+                  position: "absolute",
+                  left: `${x}%`,
+                  top: `${y}%`,
+                  width: 190,
+                  height: 190,
+                  transform: `translate(-50%, -50%) translate(${motion.x}px, ${motion.y}px) rotate(${motion.r}deg) scale(${scale})`,
+                  transformOrigin: "50% 50%",
+                  filter: "drop-shadow(0 14px 10px rgba(20,30,50,.13))",
+                }}
+              >
+                <svg width="190" height="190" viewBox="0 0 190 190">
+                  {graphic}
+                </svg>
+              </div>
+            );
+          }
+
+          function ImpactFX({ beat, localFrame }) {
+            const start = Number(beat.start || 0);
+            const end = Number(beat.end || start + 1);
+            if (localFrame < start * 30 || localFrame > end * 30) return null;
+
+            const p = clamp((localFrame / 30 - start) / Math.max(0.1, end - start));
+            const event = normalizeAction(`${beat.action || ""} ${beat.event || ""}`);
+
+            if (
+              !event.includes("collide") &&
+              !event.includes("impact") &&
+              !event.includes("reveal") &&
+              !event.includes("celebrate") &&
+              !event.includes("surprise")
+            ) {
+              return null;
+            }
+
+            const r = interpolate(p, [0, 1], [20, 130]);
+            const opacity = interpolate(p, [0, 0.2, 1], [0, 0.85, 0]);
+
+            return (
+              <div style={{ position: "absolute", left: "50%", top: "45%", transform: "translate(-50%, -50%)", opacity }}>
+                <svg width="360" height="360" viewBox="0 0 360 360">
+                  <circle cx="180" cy="180" r={r} fill="none" stroke="#FFD75A" strokeWidth="12" />
+                  {[0, 45, 90, 135].map((a) => (
+                    <line
+                      key={a}
+                      x1="180"
+                      y1="180"
+                      x2={180 + Math.cos((a * Math.PI) / 180) * (r + 55)}
+                      y2={180 + Math.sin((a * Math.PI) / 180) * (r + 55)}
+                      stroke="#FFFFFF"
+                      strokeWidth="8"
+                      strokeLinecap="round"
+                    />
+                  ))}
+                </svg>
+              </div>
+            );
+          }
+
+          function Captions({ captions, frame }) {
+            if (!Array.isArray(captions) || !captions.length) return null;
+
+            const time = frame / 30;
+            const active = captions.find(
+              (c) => time >= Number(c.start || 0) && time <= Number(c.end || 0)
+            );
+
+            if (!active) return null;
+
+            const words = captions.filter(
+              (c) => Math.abs(Number(c.start || 0) - Number(active.start || 0)) < 0.001 &&
+                     Math.abs(Number(c.end || 0) - Number(active.end || 0)) < 0.001
+            );
+
+            return (
+              <div
+                style={{
+                  position: "absolute",
+                  left: 70,
+                  right: 70,
+                  bottom: 90,
+                  display: "flex",
+                  justifyContent: "center",
+                  zIndex: 50,
+                }}
+              >
+                <div
+                  style={{
+                    maxWidth: 900,
+                    padding: "18px 28px",
+                    borderRadius: 22,
+                    background: "rgba(8,14,25,.78)",
+                    color: "#fff",
+                    fontSize: 48,
+                    lineHeight: 1.08,
+                    fontWeight: 800,
+                    fontFamily: "Arial, Helvetica, sans-serif",
+                    textAlign: "center",
+                    boxShadow: "0 10px 30px rgba(0,0,0,.2)",
+                  }}
+                >
+                  {words.length ? words.map((w, i) => (
+                    <span key={i} style={{ marginRight: 10 }}>
+                      {w.word}
+                    </span>
+                  )) : active.text}
                 </div>
               </div>
             );
           }
 
-          export function Video({ scenes, captions, theme, audio }) {
-            const { fps } = useVideoConfig();
-            const frame = useCurrentFrame();
-            const safeScenes = Array.isArray(scenes) && scenes.length ? scenes : [{
-              text:"No scene data", objects:[{emoji:"💡",from:[50,50],to:[50,45],size:190}]
-            }];
-            const durations = safeScenes.map(s => Math.max(1, Math.round((Number(s.duration)||4)*fps)));
-            const total = durations.reduce((a,b)=>a+b,0);
-            let cursor = 0;
-            const sceneIndex = durations.findIndex(d => frame >= cursor && frame < (cursor += d));
-            const idx = sceneIndex < 0 ? safeScenes.length-1 : sceneIndex;
-            let start = durations.slice(0,idx).reduce((a,b)=>a+b,0);
-            let end = start + durations[idx];
+          function Scene({ scene, sceneIndex, sceneStart, frame, theme }) {
+            const sceneDuration = Number(scene.duration || 5);
+            const localFrame = frame - Math.round(sceneStart * 30);
+            const localSeconds = localFrame / 30;
+            const progress = clamp(localSeconds / sceneDuration);
+            const beats = Array.isArray(scene.beats) ? scene.beats : [];
+
+            const activeBeats = beats.filter((b) => {
+              const start = Number(b.start ?? b.time ?? 0);
+              const end = Number(b.end ?? (start + 1.2));
+              return localSeconds >= start && localSeconds <= end;
+            });
+
+            const camera = scene.camera || "steady";
+
             return (
               <AbsoluteFill>
-                <Scene scene={safeScenes[idx]} index={idx} startFrame={start} endFrame={end} theme={theme||{}}/>
-                <Captions captions={captions||[]}/>
-                {audio ? <Audio src={staticFile(audio)}/> : null}
+                <Camera type={camera} progress={progress}>
+                  <Background
+                    setting={scene.setting || ""}
+                    theme={theme || {}}
+                    sceneIndex={sceneIndex}
+                  />
+
+                  {(Array.isArray(scene.objects) ? scene.objects : []).map((object, i) => (
+                    <Prop
+                      key={`object-${i}`}
+                      object={object}
+                      activeBeats={activeBeats}
+                      localFrame={localFrame}
+                      sceneDuration={sceneDuration}
+                      index={i}
+                    />
+                  ))}
+
+                  {(Array.isArray(scene.characters) ? scene.characters : []).map((character, i) => (
+                    <Character
+                      key={`character-${i}`}
+                      character={character}
+                      activeBeats={activeBeats}
+                      localFrame={localFrame}
+                      sceneDuration={sceneDuration}
+                      index={i}
+                    />
+                  ))}
+
+                  {activeBeats.map((beat, i) => (
+                    <ImpactFX key={`fx-${i}`} beat={beat} localFrame={localFrame} />
+                  ))}
+
+                  {scene.text ? (
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: 70,
+                        right: 70,
+                        top: 95,
+                        textAlign: "center",
+                        fontFamily: "Arial, Helvetica, sans-serif",
+                        fontSize: 46,
+                        fontWeight: 800,
+                        color: "#172033",
+                        textShadow: "0 2px 0 rgba(255,255,255,.6)",
+                      }}
+                    >
+                      {scene.text}
+                    </div>
+                  ) : null}
+                </Camera>
+              </AbsoluteFill>
+            );
+          }
+
+          export function Video({ scenes = [], captions = [], theme = {} }) {
+            const frame = useCurrentFrame();
+
+            let cursor = 0;
+            const items = scenes.map((scene, i) => {
+              const start = cursor;
+              const duration = Number(scene.duration || 5);
+              cursor += duration;
+              return { scene, index: i, start, duration };
+            });
+
+            const current = items.find(
+              (item) =>
+                frame >= Math.round(item.start * 30) &&
+                frame < Math.round((item.start + item.duration) * 30)
+            ) || items[items.length - 1];
+
+            return (
+              <AbsoluteFill style={{ background: PALETTE.bg }}>
+                {current ? (
+                  <Scene
+                    scene={current.scene}
+                    sceneIndex={current.index}
+                    sceneStart={current.start}
+                    frame={frame}
+                    theme={theme}
+                  />
+                ) : null}
+
+                <Captions captions={captions} frame={frame} />
+
+                <Audio src={staticFile("voice.mp3")} volume={1} />
               </AbsoluteFill>
             );
           }
           EOF
 
-          printf '%s' "$SCRIPT_TEXT" > script.txt
-          printf '%s' "$SCENES_JSON" > scenes.json
-          printf '%s' "$VIDEO_TITLE" > title.txt
-          printf '%s' "$THEME_JSON" > theme.json
-
-          python3 - <<'PY'
-          import json, re, pathlib
-          p=pathlib.Path(".")
-          raw=json.loads(p.joinpath("scenes.json").read_text())
-          if isinstance(raw, dict) and "scenes" in raw: raw=raw["scenes"]
-          if not isinstance(raw,list): raise SystemExit("scenes must be an array")
-          if not (5 <= len(raw) <= 7): raise SystemExit(f"Expected 5-7 scenes, got {len(raw)}")
-          script=p.joinpath("script.txt").read_text().strip()
-          words=re.findall(r"\S+",script)
-          if not (90 <= len(words) <= 120): raise SystemExit(f"Expected 90-120 voiceover words, got {len(words)}")
-          total=34.0
-          per=total/len(raw)
-          out=[]
-          for i,s in enumerate(raw):
-              if not isinstance(s,dict): raise SystemExit(f"Scene {i+1} is not an object")
-              x=dict(s)
-              x["duration"]=float(x.get("duration") or per)
-              if x["duration"] < 2.5 or x["duration"] > 8.0: x["duration"]=per
-              if not isinstance(x.get("objects"),list): x["objects"]=[]
-              x["objects"]=x["objects"][:14]
-              if not x["objects"]:
-                  x["objects"]=[{"emoji":"💡","from":[50,55],"to":[58,48],"size":180}]
-              if not isinstance(x.get("characters"),list): x["characters"]=[]
-              if not isinstance(x.get("beats"),list):
-                  x["beats"]=[]
-              x["beats"]=x["beats"][:10]
-              out.append(x)
-          theme=json.loads(p.joinpath("theme.json").read_text() or "{}")
-          if not isinstance(theme,dict): theme={}
-          props={"title":p.joinpath("title.txt").read_text().strip(),"script":script,"scenes":out,"theme":theme,"captions":[]}
-          p.joinpath("props.json").write_text(json.dumps(props))
-          print("Storyboard validation OK:",len(out),"scenes",len(words),"words")
-          PY
-
-          npm install --no-audit --no-fund
-          npm run typecheck
-
-      - name: Generate voice and captions
-        shell: bash
+      - name: Save n8n storyboard
         env:
-          SCRIPT_TEXT: ${{ inputs.script }}
+          SCRIPT: ${{ inputs.script }}
+          SCENES_JSON: ${{ inputs.scenes }}
+          TITLE: ${{ inputs.title }}
+          THEME_JSON: ${{ inputs.theme }}
         run: |
           set -euo pipefail
-          cd ai-video
-          python3 -m venv .venv
+          printf '%s' "$SCRIPT" > ai-video/script.txt
+          printf '%s' "$SCENES_JSON" > ai-video/scenes.json
+          printf '%s' "$TITLE" > ai-video/title.txt
+          printf '%s' "$THEME_JSON" > ai-video/theme.json
+
+      - name: Normalize and validate storyboard
+        working-directory: ai-video
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          script = Path("script.txt").read_text(encoding="utf-8").strip()
+          scenes = json.loads(Path("scenes.json").read_text(encoding="utf-8"))
+          theme = json.loads(Path("theme.json").read_text(encoding="utf-8") or "{}")
+
+          if not isinstance(scenes, list):
+              raise SystemExit("Storyboard must be a JSON array.")
+
+          if len(scenes) != 6:
+              raise SystemExit(f"Expected exactly 6 scenes, got {len(scenes)}.")
+
+          words = script.split()
+          if not 90 <= len(words) <= 120:
+              raise SystemExit(f"Script must contain 90–120 words, got {len(words)}.")
+
+          normalized = []
+          for si, scene in enumerate(scenes):
+              if not isinstance(scene, dict):
+                  raise SystemExit(f"Scene {si+1} is not an object.")
+
+              duration = float(scene.get("duration", 5))
+              if duration <= 0:
+                  raise SystemExit(f"Scene {si+1} has invalid duration.")
+
+              beats = scene.get("beats") or []
+              beats2 = []
+              for bi, beat in enumerate(beats):
+                  if not isinstance(beat, dict):
+                      continue
+                  t = float(beat.get("time", beat.get("start", 0)))
+                  beats2.append({
+                      **beat,
+                      "time": max(0, t),
+                  })
+
+              beats2.sort(key=lambda b: b["time"])
+
+              for bi, beat in enumerate(beats2):
+                  start = min(float(beat["time"]), max(0, duration - 0.1))
+                  if bi + 1 < len(beats2):
+                      end = min(float(beats2[bi+1]["time"]), duration)
+                  else:
+                      end = duration
+                  if end <= start:
+                      end = min(duration, start + 0.8)
+
+                  beat["start"] = start
+                  beat["end"] = end
+
+              scene["duration"] = duration
+              scene["beats"] = beats2
+              scene["characters"] = scene.get("characters") or []
+              scene["objects"] = scene.get("objects") or []
+              scene["setting"] = scene.get("setting") or "studio"
+              scene["camera"] = scene.get("camera") or "steady"
+              normalized.append(scene)
+
+          total = sum(float(s["duration"]) for s in normalized)
+          if total < 25 or total > 45:
+              raise SystemExit(f"Total duration should be 25–45 seconds, got {total:.1f}s.")
+
+          props = {
+              "scenes": normalized,
+              "captions": [],
+              "title": Path("title.txt").read_text(encoding="utf-8").strip(),
+              "theme": theme if isinstance(theme, dict) else {},
+          }
+
+          Path("props.json").write_text(
+              json.dumps(props, ensure_ascii=False),
+              encoding="utf-8"
+          )
+
+          print(f"Validated: 6 scenes, {len(words)} words, {total:.1f}s total.")
+          PY
+
+      - name: Install Remotion
+        working-directory: ai-video
+        run: |
+          npm install --no-fund --no-audit
+
+      - name: Ensure Remotion browser
+        working-directory: ai-video
+        run: |
+          npx remotion browser ensure
+
+      - name: Generate voice
+        working-directory: ai-video
+        env:
+          SCRIPT: ${{ inputs.script }}
+        run: |
+          set -euo pipefail
+
+          python -m venv .venv
           . .venv/bin/activate
-          pip install --disable-pip-version-check -q edge-tts faster-whisper
-          python - <<'PY'
-          import asyncio, os
-          import edge_tts
-          text=os.environ["SCRIPT_TEXT"]
-          async def main():
-              c=edge_tts.Communicate(text, "en-US-AriaNeural", rate="+8%", pitch="+0Hz")
-              await c.save("voice.mp3")
-          asyncio.run(main())
-          PY
-          mkdir -p public
-          cp voice.mp3 public/voice.mp3
-          python - <<'PY'
-          from faster_whisper import WhisperModel
-          model=WhisperModel("tiny.en", device="cpu", compute_type="int8")
-          segments,_=model.transcribe("voice.mp3", word_timestamps=True, vad_filter=True)
-          words=[]
-          for seg in segments:
-              for w in (seg.words or []):
-                  words.append({"word":w.word.strip(),"start":float(w.start),"end":float(w.end)})
-          import json
-          json.dump(words,open("captions.json","w"),ensure_ascii=False)
-          print("Caption words:",len(words))
-          PY
-          python - <<'PY'
-          import json
-          p=json.load(open("props.json"))
-          c=json.load(open("captions.json"))
-          p["captions"]=c
-          p["audio"]="voice.mp3"
-          json.dump(p,open("props.json","w"))
-          PY
 
-      - name: Render Remotion video
+          pip install --disable-pip-version-check --no-cache-dir edge-tts faster-whisper
+
+          edge-tts \
+            --voice en-US-JennyNeural \
+            --rate "+3%" \
+            --text "$SCRIPT" \
+            --write-media public/voice.mp3
+
+      - name: Generate word-level captions
+        working-directory: ai-video
         run: |
           set -euo pipefail
-          cd ai-video
-          npm run render
-          test -s out.mp4
-          ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 out.mp4
-          ffprobe -v error -show_entries format=duration -of csv=p=0 out.mp4
+          . .venv/bin/activate
 
-      - name: Publish video artifact
+          python - <<'PY'
+          import json
+          from faster_whisper import WhisperModel
+
+          model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
+
+          segments, _ = model.transcribe(
+              "public/voice.mp3",
+              word_timestamps=True,
+              vad_filter=True,
+          )
+
+          words = []
+          for segment in segments:
+              for word in segment.words or []:
+                  text = (word.word or "").strip()
+                  if not text:
+                      continue
+                  words.append({
+                      "word": text,
+                      "start": round(float(word.start), 3),
+                      "end": round(float(word.end), 3),
+                      "text": text,
+                  })
+
+          with open("captions.json", "w", encoding="utf-8") as f:
+              json.dump(words, f, ensure_ascii=False)
+
+          print(f"Generated {len(words)} caption words.")
+          PY
+
+      - name: Merge captions into props
+        working-directory: ai-video
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          props = json.loads(Path("props.json").read_text(encoding="utf-8"))
+          captions = json.loads(Path("captions.json").read_text(encoding="utf-8"))
+
+          props["captions"] = captions
+
+          Path("props.json").write_text(
+              json.dumps(props, ensure_ascii=False),
+              encoding="utf-8"
+          )
+          PY
+
+      - name: Render MP4
+        working-directory: ai-video
+        run: |
+          set -euo pipefail
+
+          npm run render
+
+          test -s out/video.mp4
+
+          ffprobe \
+            -v error \
+            -show_entries format=duration \
+            -of default=noprint_wrappers=1:nokey=1 \
+            out/video.mp4
+
+      - name: Upload rendered video
         uses: actions/upload-artifact@v4
         with:
           name: ai-cartoon-video
-          path: ai-video/out.mp4
+          path: ai-video/out/video.mp4
           if-no-files-found: error
-
+          retention-days: 7
