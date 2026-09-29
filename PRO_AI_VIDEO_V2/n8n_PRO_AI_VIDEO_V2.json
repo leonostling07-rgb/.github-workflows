@@ -1,0 +1,251 @@
+{
+  "name": "FREE AI VIDEO - n8n Cloud Trigger",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "cade9caf-077c-4ab5-a245-930bc1bdba0a",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "domain",
+              "name": "domain",
+              "type": "string",
+              "value": "={{ [\"deep-sea and ocean mysteries\",\"outer space and the planets\",\"ancient history and lost civilizations\",\"the human body and its limits\",\"money, wealth and hidden economics\",\"wild animals and their strange abilities\",\"forgotten inventions and old technology\",\"natural disasters and extreme weather\",\"psychology of persuasion and human behavior\",\"food science and what we eat\",\"famous unsolved mysteries\",\"survival and the human will to live\",\"secrets of everyday objects\",\"records: the biggest, fastest, deadliest\",\"the future and wild predictions\",\"microscopic life and things too small to see\",\"languages, symbols and secret codes\",\"art heists, forgeries and hidden treasure\",\"the deep past: dinosaurs and prehistoric life\",\"sports feats and the science behind them\",\"myths and legends that turned out true\",\"the internet, data and hidden algorithms\",\"strange laws and bizarre history\",\"unexpected places humans actually live\"][Math.floor(Math.random()*24)] }}"
+            },
+            {
+              "id": "angle",
+              "name": "angle",
+              "type": "string",
+              "value": "={{ [\"a surprising hidden origin\",\"a little-known danger\",\"a record almost nobody knows\",\"a bizarre but true story\",\"an unsolved mystery\",\"a counterintuitive truth\",\"a shocking size or scale comparison\",\"a secret that was covered up\",\"a mistake that changed everything\",\"a strange cause-and-effect chain\",\"something that sounds fake but is real\",\"a thing hiding in plain sight\"][Math.floor(Math.random()*12)] }}"
+            },
+            {
+              "id": "seed",
+              "name": "seed",
+              "type": "string",
+              "value": "={{ Math.floor(Math.random() * 1000000000).toString() }}"
+            },
+            {
+              "id": "language",
+              "name": "language",
+              "type": "string",
+              "value": "en"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "46f356fa-e696-439e-8fde-319b394bc1c3",
+      "name": "Video input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "prompt",
+              "name": "prompt",
+              "type": "string",
+              "value": "=You are the director, storyboard artist, scriptwriter and visual planner for a premium 2D animated short-form channel.\n\nCreate ONE finished vertical short video in 30–40 seconds. The result must feel like a tiny professionally directed 2D cartoon film, not a slideshow, not stock footage, not a collection of icons, and not a generic AI animation.\n\nLANGUAGE\nWrite the narration and all on-screen text in {{ $json.language }}. For English use natural conversational English. For Swedish use natural conversational Swedish.\n\nTOPIC INPUT\nBroad subject: {{ $json.domain }}\nAngle: {{ $json.angle }}\nUniqueness seed: {{ $json.seed }}\nUse the broad subject only as a starting point. Invent one narrow, concrete, surprising topic that can be explained clearly in one short story.\n\nFACTUALITY\nUse real, well-established facts only. Never invent studies, statistics, quotes, historical events or scientific claims. If a precise fact is uncertain, choose a different angle that can be stated confidently. Do not cite sources inside the narration.\n\nSTORY\nThe video must have one central idea and a clear mini-story:\n1. HOOK — immediate visual and verbal pattern interrupt.\n2. SETUP — show who/what we are looking at and the situation.\n3. ESCALATION — several new developments, each visually different.\n4. PAYOFF — resolve the open loop with the most satisfying fact or consequence.\n5. END — a brief visual callback when useful.\n\nDo not greet the viewer. Do not say “Did you know?”. Do not add a generic call to action.\n\nLENGTH\nReturn 5–7 scenes. Total narration must be 90–120 words. Aim for 100–112 words.\nEvery scene narration must be 12–22 words and exactly one sentence.\nThe concatenation of scene narration strings in order MUST equal the full voiceover.\n\nVISUAL LANGUAGE — NON-NEGOTIABLE\nThis is a premium 2D cartoon. There are NO photos, NO stock footage, NO video URLs, NO AI-generated images and NO emoji-only scenes.\nEverything is drawn in Remotion as clean vector-like 2D art.\n\nEach scene must have:\n- 1–3 recurring cartoon characters with clear roles.\n- 4–8 meaningful objects/props that literally belong in the scene.\n- A concrete environment: bedroom, office, kitchen, school, lab, gym, street, city, nature, space or workshop.\n- 6–9 visual beats. A beat is a distinct event, not a repeated idle animation.\n- At least one character interacting with an object in the scene.\n- At least one clear cause-and-effect event.\n- Camera movement chosen intentionally: static, push, pull, panLeft, panRight, tilt, follow or whip.\n- Different actions from beat to beat. Never use “idle” for more than one beat in a row.\n- Subtle physical comedy or charm when it fits, but never random gags that distract from the story.\n\nThe visuals must literally match what is being narrated. If the narration says a person falls asleep, show a bed, eyelids closing and the character dropping into sleep. If the narration says a phone keeps buzzing, show the phone vibrating and the character reacting. If the narration describes money rising, show the graph and money physically moving upward. Abstract ideas may use a concrete visual metaphor, but the metaphor must be obvious.\n\nCONTINUITY\nUse the same main character across a scene whenever possible and keep the same role visually consistent. A story can have a recurring main character across multiple scenes. Secondary characters should react to the main action.\n\nVISUAL VARIETY\nDo not repeat the same object/action/camera combination across adjacent beats. The viewer should see a new meaningful visual event almost constantly. Avoid generic “zoom in”, “zoom out”, “float around”, “bounce” loops unless they are part of a specific action.\n\nCOORDINATES\nCanvas is 1080x1920. Keep x within 100–980 and y within 250–1600 because captions occupy the lower area.\nCharacter and object scale is a multiplier, usually 0.45–1.25.\n\nALLOWED CHARACTER ACTIONS\nidle, walk, run, jump, sleep, think, laugh, cry, point, hold, read, write, talk, look, react, celebrate, search, open, throw, catch, build, discover, panic, fall\n\nALLOWED OBJECT TYPES\nphone, laptop, book, brain, coffee, clock, calendar, mail, notification, heart, money, chart, check, warning, lightbulb, rocket, car, bike, house, desk, bed, dumbbell, trophy, gift, cloud, sun, moon, star, door, plant, chair, bag, headphones, cup, key, ball, box, tree, food, magnifier, paper, map, alarm, pencil, medal\n\nALLOWED ENVIRONMENTS\nhome, office, kitchen, street, school, gym, nature, city, bedroom, lab, space, workshop, abstract\n\nALLOWED CAMERA MOVES\nstatic, push, pull, panLeft, panRight, tilt, follow, whip\n\nRETURN ONLY VALID JSON. No markdown. No code fence. No commentary.\n\nEXACT JSON SHAPE:\n{\n  \"title\": \"short title\",\n  \"voiceover\": \"exact concatenation of all narration strings\",\n  \"theme\": {\"background\":\"#0c1220\",\"accent\":\"#52d8ff\",\"text\":\"#ffffff\",\"accent2\":\"#ff7aa8\"},\n  \"scenes\": [\n    {\n      \"template\":\"story\",\n      \"text\":\"2-6 word headline\",\n      \"narration\":\"One sentence of 12-22 words.\",\n      \"setting\":\"office\",\n      \"characters\":[\n        {\"id\":\"main\",\"role\":\"curious worker\",\"color\":\"#52d8ff\",\"x\":420,\"y\":1450,\"scale\":1.0},\n        {\"id\":\"friend\",\"role\":\"coworker\",\"color\":\"#ff7aa8\",\"x\":760,\"y\":1450,\"scale\":0.82}\n      ],\n      \"objects\":[\n        {\"id\":\"phone\",\"type\":\"phone\",\"x\":720,\"y\":910,\"scale\":0.75,\"rotation\":0,\"layer\":\"mid\"},\n        {\"id\":\"desk\",\"type\":\"desk\",\"x\":540,\"y\":1190,\"scale\":0.95,\"rotation\":0,\"layer\":\"back\"},\n        {\"id\":\"coffee\",\"type\":\"coffee\",\"x\":250,\"y\":1110,\"scale\":0.55,\"rotation\":0,\"layer\":\"front\"},\n        {\"id\":\"notification\",\"type\":\"notification\",\"x\":780,\"y\":650,\"scale\":0.48,\"rotation\":0,\"layer\":\"front\"}\n      ],\n      \"beats\":[\n        {\"id\":\"b1\",\"start\":0.00,\"end\":0.12,\"event\":\"The phone buzzes\",\"actor\":\"main\",\"action\":\"react\",\"objects\":[\"phone\"],\"camera\":\"push\",\"emphasis\":false,\"mood\":\"curious\"},\n        {\"id\":\"b2\",\"start\":0.12,\"end\":0.25,\"event\":\"One notification\",\"actor\":\"main\",\"action\":\"look\",\"objects\":[\"phone\",\"notification\"],\"camera\":\"follow\",\"emphasis\":true,\"mood\":\"surprise\"},\n        {\"id\":\"b3\",\"start\":0.25,\"end\":0.39,\"event\":\"It happens again\",\"actor\":\"friend\",\"action\":\"react\",\"objects\":[\"phone\"],\"camera\":\"panRight\",\"emphasis\":false,\"mood\":\"funny\"},\n        {\"id\":\"b4\",\"start\":0.39,\"end\":0.54,\"event\":\"The pattern appears\",\"actor\":\"main\",\"action\":\"discover\",\"objects\":[\"phone\",\"chart\"],\"camera\":\"push\",\"emphasis\":true,\"mood\":\"curious\"},\n        {\"id\":\"b5\",\"start\":0.54,\"end\":0.70,\"event\":\"Everything connects\",\"actor\":\"main\",\"action\":\"point\",\"objects\":[\"phone\",\"chart\",\"coffee\"],\"camera\":\"follow\",\"emphasis\":false,\"mood\":\"tense\"},\n        {\"id\":\"b6\",\"start\":0.70,\"end\":0.86,\"event\":\"The payoff lands\",\"actor\":\"main\",\"action\":\"celebrate\",\"objects\":[\"phone\",\"check\"],\"camera\":\"pull\",\"emphasis\":true,\"mood\":\"triumph\"},\n        {\"id\":\"b7\",\"start\":0.86,\"end\":1.00,\"event\":\"Back to the hook\",\"actor\":\"friend\",\"action\":\"laugh\",\"objects\":[\"phone\",\"coffee\"],\"camera\":\"static\",\"emphasis\":false,\"mood\":\"funny\"}\n      ],\n      \"transition\":\"match\"\n    }\n  ]\n}\n\nRULES FOR THE JSON:\n- Produce 5–7 scenes.\n- Every scene MUST use template \"story\".\n- Every scene MUST include narration, setting, characters, objects, beats and transition.\n- Every scene MUST have at least 1 character, 4 objects and 6 beats.\n- Every beat start/end is a number between 0 and 1 with start < end.\n- Every beat must introduce a meaningful event. Never repeat the same event wording in adjacent beats.\n- Each beat should reference the actor and object IDs that actually exist in that scene.\n- Do not invent new object types, action names, environments or camera moves outside the allowed lists.\n- Use 6–9 beats per scene. Prefer 7–8.\n- The full voiceover must be exactly the concatenation of scene narration values in scene order.\n- Total voiceover length must be 90–120 words.\n- Keep scene headlines short: 2–6 words.\n- Keep the lower 25% of the composition relatively clear for captions.\n- Theme must have strong contrast and four valid hex colors.\n- Make consecutive scenes visually different in setting, object arrangement, action or camera choreography whenever the story allows.\n- The final scene should feel like a conclusion, not a generic CTA."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2bb0d72b-1d9b-4284-8a2a-b2cb75895f9b",
+      "name": "Build prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        480,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "groqApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: \"openai/gpt-oss-120b\",\n  response_format: { type: \"json_object\" },\n  max_tokens: 12000,\n  temperature: 0.82,\n  messages: [\n    { role: \"user\", content: $json.prompt }\n  ]\n}) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "61f3c138-4a33-440e-8c74-c6012cbd9006",
+      "name": "Generate script",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        704,
+        80
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "groqApi": {
+          "id": "vlhjh3VqJLpgllIb",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "function cleanJsonString(raw) {\n  let s = String(raw ?? \"\").trim();\n  s = s.replace(/^```json\\s*/i, \"\").replace(/^```\\s*/i, \"\").replace(/```$/i, \"\").trim();\n  return s;\n}\n\nconst raw = cleanJsonString($json?.choices?.[0]?.message?.content);\nif (!raw) throw new Error(\"Groq returned no message content.\");\n\nlet data;\ntry {\n  data = JSON.parse(raw);\n} catch (e) {\n  throw new Error(\"Groq returned invalid JSON: \" + e.message + \"\\nRAW:\\n\" + raw.slice(0, 4000));\n}\n\nconst allowedTemplates = ['title','bullet-reveal','big-number','quote','story'];\nconst allowedSettings = ['home','office','kitchen','street','school','gym','nature','city','bedroom','lab','space','workshop','abstract'];\nconst allowedActions = ['idle','walk','run','jump','sleep','think','laugh','cry','point','hold','read','write','talk','look','react','celebrate','search','open','throw','catch','build','discover','panic','fall'];\nconst allowedObjects = ['phone','laptop','book','brain','coffee','clock','calendar','mail','notification','heart','money','chart','check','warning','lightbulb','rocket','car','bike','house','desk','bed','dumbbell','trophy','gift','cloud','sun','moon','star','door','plant','chair','bag','headphones','cup','key','ball','box','tree','food','magnifier','paper','map','alarm','pencil','medal'];\nconst allowedCameras = ['static','push','pull','panLeft','panRight','tilt','follow','whip'];\nconst allowedTransitions = ['cut','push','whip','match','reveal'];\n\nconst clamp=(n,min,max)=>Math.max(min,Math.min(max,n));\nconst hex=(v,f)=>/^#[0-9a-f]{6}$/i.test(String(v||''))?String(v):f;\nconst words=(s)=>String(s||'').trim().split(/\\s+/).filter(Boolean);\n\nif (!Array.isArray(data.scenes)) throw new Error(\"Generated plan has no scenes array.\");\nif (data.scenes.length < 5 || data.scenes.length > 7) throw new Error(`Generated ${data.scenes.length} scenes. Need 5–7.`);\n\nconst scenes = data.scenes.map((s, si) => {\n  const setting = allowedSettings.includes(s.setting) ? s.setting : 'abstract';\n  const chars = Array.isArray(s.characters) ? s.characters.slice(0,3).map((c,ci)=>({\n    id: String(c.id || `char${ci+1}`),\n    role: String(c.role || (ci===0?'main character':'secondary character')).slice(0,80),\n    color: hex(c.color, ci===0 ? '#52d8ff' : '#ff7aa8'),\n    x: clamp(Number(c.x)|| (ci===0?420:760), 100, 980),\n    y: clamp(Number(c.y)||1450, 900, 1600),\n    scale: clamp(Number(c.scale)|| (ci===0?1:0.82), .5, 1.25)\n  })) : [];\n  if (!chars.length) chars.push({id:'main',role:'main character',color:'#52d8ff',x:420,y:1450,scale:1});\n\n  const objs = Array.isArray(s.objects) ? s.objects.slice(0,8).map((o,oi)=>({\n    id: String(o.id || `obj${oi+1}`),\n    type: allowedObjects.includes(o.type) ? o.type : 'box',\n    x: clamp(Number(o.x)|| (220 + (oi%4)*210), 100, 980),\n    y: clamp(Number(o.y)|| (600 + (Math.floor(oi/4))*350), 250, 1500),\n    scale: clamp(Number(o.scale)||.65, .35, 1.3),\n    rotation: Number.isFinite(Number(o.rotation)) ? Number(o.rotation) : 0,\n    layer: ['back','mid','front'].includes(o.layer) ? o.layer : 'mid'\n  })) : [];\n  if (objs.length < 4) throw new Error(`Scene ${si+1} has fewer than 4 objects.`);\n\n  const objectIds = new Set(objs.map(o=>o.id));\n  const charIds = new Set(chars.map(c=>c.id));\n  const fallbackActor = chars[0].id;\n\n  const beats = Array.isArray(s.beats) ? s.beats.slice(0,9).map((b,bi)=>({\n    id: String(b.id || `b${bi+1}`),\n    start: clamp(Number(b.start),0,.99),\n    end: clamp(Number(b.end),.01,1),\n    event: String(b.event || `Beat ${bi+1}`).slice(0,70),\n    actor: charIds.has(String(b.actor)) ? String(b.actor) : fallbackActor,\n    action: allowedActions.includes(b.action) ? b.action : (bi%3===0?'react':bi%3===1?'look':'discover'),\n    objects: Array.isArray(b.objects) ? b.objects.map(String).filter(id=>objectIds.has(id)).slice(0,5) : [],\n    camera: allowedCameras.includes(b.camera) ? b.camera : (bi%3===1?'push':bi%3===2?'follow':'static'),\n    emphasis: b.emphasis === true,\n    mood: ['calm','curious','tense','funny','surprise','triumph'].includes(b.mood) ? b.mood : 'curious'\n  })).sort((a,b)=>a.start-b.start) : [];\n\n  if (beats.length < 6 || beats.length > 9) throw new Error(`Scene ${si+1} must have 6-9 visual beats.`);\n  for (let bi = 0; bi < beats.length; bi++) {\n    const b = beats[bi];\n    if (!(b.start >= 0 && b.start < b.end && b.end <= 1)) throw new Error(`Scene ${si+1} beat ${bi+1} has invalid timing.`);\n    if (!b.objects.length) throw new Error(`Scene ${si+1} beat ${bi+1} must reference at least one object.`);\n  }\n  for (let i=0;i<beats.length;i++) {\n    const nextStart = i<beats.length-1 ? beats[i+1].start : 1;\n    beats[i].start = clamp(beats[i].start, i===0?0:beats[i-1].start+0.01, .99);\n    beats[i].end = Math.max(beats[i].start+0.04, Math.min(1,nextStart));\n    if (!beats[i].objects.length) beats[i].objects = objs.slice(0, Math.min(3, objs.length)).map(o=>o.id);\n  }\n\n  const narration = String(s.narration || '').trim();\n  if (words(narration).length < 12 || words(narration).length > 22) {\n    throw new Error(`Scene ${si+1} narration must be 12–22 words: \"${narration}\"`);\n  }\n\n  return {\n    template: allowedTemplates.includes(s.template) ? s.template : 'story',\n    text: words(s.text).slice(0,6).join(' '),\n    narration,\n    setting,\n    characters: chars,\n    objects: objs,\n    beats,\n    transition: allowedTransitions.includes(s.transition) ? s.transition : 'cut'\n  };\n});\n\nconst voiceover = scenes.map(s=>s.narration).join(' ').trim();\nconst wc = words(voiceover).length;\nif (wc < 90 || wc > 120) throw new Error(`Voiceover is ${wc} words. Need 90–120.`);\n\nconst theme = {\n  background: hex(data.theme?.background,'#0c1220'),\n  accent: hex(data.theme?.accent,'#52d8ff'),\n  text: hex(data.theme?.text,'#ffffff'),\n  accent2: hex(data.theme?.accent2,'#ff7aa8')\n};\n\nreturn [{json:{\n  title: String(data.title || 'AI Short').trim().slice(0,80),\n  voiceover,\n  theme,\n  language: String($('Video input').first().json.language || 'en'),\n  scenes,\n  seed: Number($('Video input').first().json.seed || 0)\n}}];"
+      },
+      "id": "deb4d93b-6b20-4718-ae7b-60b8d126c2aa",
+      "name": "Build plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1488,
+        -352
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/leonostling07-rgb/.github-workflows/actions/workflows/render-video.yml/dispatches",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ref: \"main\", inputs: { script: String($('Build plan').first().json.voiceover), scenes: JSON.stringify($('Build plan').first().json.scenes), title: String($('Build plan').first().json.title), theme: JSON.stringify($('Build plan').first().json.theme), language: String($('Build plan').first().json.language || \"en\") } }) }}",
+        "options": {}
+      },
+      "id": "0db6eb52-31e0-4e45-8af1-9205d6248fa8",
+      "name": "Start free cloud render",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1520,
+        -112
+      ],
+      "credentials": {
+        "githubApi": {
+          "id": "k9orsYxW2lCVkbgD",
+          "name": "GitHub account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Video input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Video input": {
+      "main": [
+        [
+          {
+            "node": "Build prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build prompt": {
+      "main": [
+        [
+          {
+            "node": "Generate script",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate script": {
+      "main": [
+        [
+          {
+            "node": "Build plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build plan": {
+      "main": [
+        [
+          {
+            "node": "Start free cloud render",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "dff34016-c042-432e-bcfc-9109c93498ca",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "99ce28c84c9e5789cfdfd04293cd3145a83329ff24ddf2a2aa58aaa5cc2cdf4f"
+  },
+  "nodeGroups": [
+    {
+      "id": "1f3f5032-4581-47c6-8f02-c653c024c4f3",
+      "name": "can you ju",
+      "nodeIds": [
+        "46f356fa-e696-439e-8fde-319b394bc1c3",
+        "2bb0d72b-1d9b-4284-8a2a-b2cb75895f9b",
+        "61f3c138-4a33-440e-8c74-c6012cbd9006",
+        "deb4d93b-6b20-4718-ae7b-60b8d126c2aa"
+      ],
+      "description": "Creates a 5–7 scene premium 2D cartoon plan with character/object beats, sends it to the Remotion GitHub renderer, and keeps captions in the final video."
+    }
+  ],
+  "id": "VfJI9ACYC4I85t7j",
+  "tags": []
+}

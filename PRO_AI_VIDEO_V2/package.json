@@ -1,0 +1,22 @@
+{
+  "name": "pro-ai-short-video-engine",
+  "private": true,
+  "version": "2.0.1",
+  "scripts": {
+    "render": "remotion render src/index.ts Short out.mp4",
+    "studio": "remotion studio src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/renderer": "4.0.529",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "remotion": "4.0.529"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "typescript": "^5.8.3",
+    "@remotion/cli": "4.0.529"
+  }
+}
