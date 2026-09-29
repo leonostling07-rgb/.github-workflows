@@ -1,353 +1,505 @@
 import React from "react";
-import { AbsoluteFill, Audio, Img, OffthreadVideo, Sequence, staticFile, useCurrentFrame, useVideoConfig, spring, interpolate } from "remotion";
+import { AbsoluteFill, Audio, Sequence, staticFile, useCurrentFrame, useVideoConfig, spring, interpolate } from "remotion";
 
 export type Theme = { background: string; accent: string; text: string };
-
-// A moving "actor": an emoji/object placed in percentage coordinates that can
-// travel from -> to across the scene, spin, scale in and gently bob. This is
-// what lets a scene literally act out the words (e.g. a rocket flying to a moon).
-export type SceneObject = {
-  emoji: string;
-  from: [number, number];      // [x%, y%] start
-  to?: [number, number] | null; // [x%, y%] end (omit to stay put)
-  size?: number;               // px
-  spin?: number;               // total degrees across the scene
-  delay?: number;              // frames before it appears
-  float?: boolean;             // gentle bobbing
-};
-
-// Animated annotations drawn over the scene to point and highlight.
-export type Annotation = {
-  type: "arrow" | "circle" | "underline";
-  from?: [number, number];     // arrow/underline start [x%, y%]
-  to?: [number, number];       // arrow/underline end [x%, y%]
-  at?: [number, number];       // circle center [x%, y%]
-  r?: number;                  // circle radius (% of width)
-  delay?: number;              // frames before it draws
-  color?: string;
-};
-
+export type StoryAction = "launch" | "walk" | "climb" | "think" | "celebrate" | "search";
+export type StoryVehicle = "rocket" | "car" | "plane" | "none";
+export type StoryDestination = "moon" | "mountain" | "city" | "star" | "flag" | "lightbulb" | "none";
 export type Scene = {
-  template: "title" | "bullet-reveal" | "big-number" | "quote";
+  template: "title" | "bullet-reveal" | "big-number" | "quote" | "story";
   text: string; items?: string[]; number?: string; label?: string; author?: string;
+  action?: StoryAction; vehicle?: StoryVehicle; destination?: StoryDestination;
   from: number; duration: number;
-  media_file?: string | null; media_type?: "image" | "video" | null;
-  objects?: SceneObject[];
-  annotations?: Annotation[];
 };
 export type Word = { word: string; start: number; end: number };
 export type ShortProps = { title: string; theme: Theme; scenes: Scene[]; words: Word[]; totalFrames: number; hasMusic: boolean };
 
-const font = '"Helvetica Neue", Arial, sans-serif';
-const W = 1080;
-const H = 1920;
+const font = '"Inter", "Helvetica Neue", Arial, sans-serif';
 
-const useSpring = (delay = 0, config = { damping: 14, stiffness: 110 }) => {
+// Strip emoji / pictographs so stray characters from an AI script never
+// break layout or wrap unpredictably. Keep plain punctuation and letters only.
+const clean = (s: string | undefined | null) =>
+  (s || "")
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\uFE0F]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const useSpr = (delay = 0, cfg?: { damping?: number; stiffness?: number; mass?: number }) => {
   const f = useCurrentFrame();
   const { fps } = useVideoConfig();
-  return spring({ frame: f - delay, fps, config });
+  return spring({ frame: f - delay, fps, config: { damping: 16, stiffness: 120, mass: 0.9, ...cfg } });
 };
 
-const alpha = (hex: string, a: string) => (/^#[0-9a-fA-F]{6}$/.test(hex) ? hex + a : hex);
+const hexToRgba = (hex: string, a: number) => {
+  const h = hex.replace("#", "");
+  const n = h.length === 3
+    ? h.split("").map((c) => c + c).join("")
+    : h.padEnd(6, "0");
+  const r = parseInt(n.slice(0, 2), 16) || 0;
+  const g = parseInt(n.slice(2, 4), 16) || 0;
+  const b = parseInt(n.slice(4, 6), 16) || 0;
+  return `rgba(${r},${g},${b},${a})`;
+};
 
-const GradientBG: React.FC<{ theme: Theme }> = ({ theme }) => {
+// ---------- Cinematic layered background ----------
+const Blob: React.FC<{ cx: number; cy: number; r: number; color: string; speed: number; phase: number }> = ({ cx, cy, r, color, speed, phase }) => {
   const f = useCurrentFrame();
-  const x = 50 + 26 * Math.sin(f / 70);
-  const y = 34 + 16 * Math.cos(f / 90);
+  const x = cx + 6 * Math.sin(f / speed + phase);
+  const y = cy + 5 * Math.cos(f / (speed * 1.3) + phase);
+  const scale = 1 + 0.06 * Math.sin(f / (speed * 0.8) + phase);
   return (
-    <AbsoluteFill style={{ background: theme.background }}>
-      <AbsoluteFill style={{ background: `radial-gradient(circle at ${x}% ${y}%, ${alpha(theme.accent, "55")}, transparent 55%)` }} />
-      <AbsoluteFill style={{ background: `radial-gradient(circle at ${100 - x}% ${100 - y}%, ${alpha(theme.accent, "33")}, transparent 50%)` }} />
+    <div style={{
+      position: "absolute", left: `${x}%`, top: `${y}%`, width: r, height: r,
+      transform: `translate(-50%,-50%) scale(${scale})`,
+      background: color, borderRadius: "50%", filter: "blur(90px)", opacity: 0.55,
+    }} />
+  );
+};
+
+const Background: React.FC<{ theme: Theme; frame: number; totalFrames: number }> = ({ theme, frame }) => {
+  const zoom = 1 + interpolate(frame % 240, [0, 240], [0, 0.04]);
+  return (
+    <AbsoluteFill style={{ background: theme.background, overflow: "hidden" }}>
+      <AbsoluteFill style={{ transform: `scale(${zoom})` }}>
+        <Blob cx={22} cy={28} r={620} color={hexToRgba(theme.accent, 0.9)} speed={95} phase={0} />
+        <Blob cx={80} cy={70} r={700} color={hexToRgba(theme.accent, 0.55)} speed={130} phase={2} />
+        <Blob cx={55} cy={45} r={520} color={hexToRgba(theme.text, 0.12)} speed={160} phase={4} />
+      </AbsoluteFill>
+      {/* fine grain for texture */}
+      <AbsoluteFill style={{
+        backgroundImage: "radial-gradient(rgba(255,255,255,0.035) 1px, transparent 1px)",
+        backgroundSize: "3px 3px", mixBlendMode: "overlay", opacity: 0.5,
+      }} />
+      {/* vignette */}
+      <AbsoluteFill style={{ background: "radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.55) 100%)" }} />
     </AbsoluteFill>
   );
 };
 
-const MediaBG: React.FC<{ s: Scene; theme: Theme; duration: number; index: number }> = ({ s, theme, duration, index }) => {
+// ---------- Scene transition wrapper ----------
+const SceneWrap: React.FC<{ duration: number; children: React.ReactNode }> = ({ duration, children }) => {
   const f = useCurrentFrame();
-  if (!s.media_file) return <GradientBG theme={theme} />;
-  const src = staticFile(s.media_file);
-  // Continuous, gently accelerating Ken Burns move that alternates direction each
-  // scene so the whole video is always moving and never sits on a static frame.
-  const dir = index % 2 === 0 ? 1 : -1;
-  const scale = interpolate(f, [0, duration], [1.12, 1.3], { extrapolateRight: "clamp" });
-  const panX = interpolate(f, [0, duration], [-30 * dir, 30 * dir], { extrapolateRight: "clamp" });
-  const panY = interpolate(f, [0, duration], [22, -22], { extrapolateRight: "clamp" });
-  const common: React.CSSProperties = { width: "100%", height: "100%", objectFit: "cover" };
+  const { fps } = useVideoConfig();
+  const inP = spring({ frame: f, fps, config: { damping: 18, stiffness: 130 } });
+  const outStart = duration - 14;
+  const outP = interpolate(f, [outStart, duration], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const opacity = interpolate(f, [0, 8], [0, 1], { extrapolateRight: "clamp" }) * (1 - outP);
+  const scale = 0.94 + 0.06 * inP - 0.05 * outP;
+  const blur = outP * 6;
   return (
-    <AbsoluteFill style={{ background: theme.background }}>
-      {s.media_type === "video" ? (
-        <OffthreadVideo src={src} muted loop style={common} />
+    <AbsoluteFill style={{ opacity, transform: `scale(${scale})`, filter: `blur(${blur}px)` }}>
+      {children}
+    </AbsoluteFill>
+  );
+};
+
+const GlassCard: React.FC<{ children: React.ReactNode; pad?: number }> = ({ children, pad = 64 }) => (
+  <div style={{
+    background: "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.14)",
+    borderRadius: 40, padding: pad,
+    backdropFilter: "blur(18px)",
+    boxShadow: "0 30px 80px rgba(0,0,0,0.35)",
+  }}>{children}</div>
+);
+
+const Center: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <AbsoluteFill style={{ justifyContent: "center", alignItems: "center", padding: "0 84px", paddingBottom: 360, fontFamily: font }}>
+    {children}
+  </AbsoluteFill>
+);
+
+// ---------- Masked text reveal (cinematic wipe, not flying words) ----------
+const MaskedText: React.FC<{ text: string; fontSize: number; weight: number; color: string; delay?: number; align?: "center" | "left" }> = ({ text, fontSize, weight, color, delay = 0, align = "center" }) => {
+  const p = useSpr(delay, { damping: 22, stiffness: 90 });
+  const reveal = interpolate(p, [0, 1], [100, 0]);
+  return (
+    <div style={{ position: "relative", overflow: "hidden", textAlign: align }}>
+      <div style={{
+        fontSize, fontWeight: weight, color, lineHeight: 1.12, textAlign: align, letterSpacing: -1,
+        clipPath: `inset(0 ${reveal}% 0 0)`,
+        textShadow: "0 8px 30px rgba(0,0,0,0.35)",
+      }}>{text}</div>
+    </div>
+  );
+};
+
+// ---------- Templates ----------
+const Title: React.FC<{ s: Scene; t: Theme }> = ({ s, t }) => {
+  const text = clean(s.text);
+  const words = text.split(" ");
+  const mid = Math.ceil(words.length / 2);
+  const line1 = words.slice(0, mid).join(" ");
+  const line2 = words.slice(mid).join(" ");
+  return (
+    <Center>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxWidth: 900 }}>
+        <MaskedText text={line1} fontSize={112} weight={900} color={t.text} delay={0} />
+        {line2 && <MaskedText text={line2} fontSize={112} weight={900} color={t.accent} delay={5} />}
+      </div>
+    </Center>
+  );
+};
+
+const Bullet: React.FC<{ text: string; delay: number; t: Theme; i: number }> = ({ text, delay, t, i }) => {
+  const p = useSpr(delay);
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 26, margin: "14px 0", width: "100%", maxWidth: 820,
+      opacity: p, transform: `translateX(${(1 - p) * 90}px)`,
+    }}>
+      <div style={{
+        width: 56, height: 56, borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center",
+        background: hexToRgba(t.accent, 0.18), border: `1.5px solid ${hexToRgba(t.accent, 0.6)}`,
+        color: t.accent, fontWeight: 900, fontSize: 28, flexShrink: 0,
+      }}>{i + 1}</div>
+      <div style={{ fontSize: 62, fontWeight: 700, color: t.text, lineHeight: 1.15 }}>{text}</div>
+    </div>
+  );
+};
+
+const Bullets: React.FC<{ s: Scene; t: Theme }> = ({ s, t }) => {
+  const head = useSpr(0);
+  const items = (s.items || []).map(clean).filter(Boolean);
+  const gap = Math.max(10, (s.duration * 0.55) / Math.max(1, items.length));
+  return (
+    <Center>
+      <GlassCard pad={70}>
+        <div style={{ fontSize: 78, fontWeight: 900, color: t.text, textAlign: "center", marginBottom: 46,
+          opacity: head, transform: `scale(${0.9 + 0.1 * head})`, maxWidth: 820 }}>{clean(s.text)}</div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+          {items.map((it, i) => <Bullet key={i} text={it} delay={10 + i * gap} t={t} i={i} />)}
+        </div>
+      </GlassCard>
+    </Center>
+  );
+};
+
+const BigNumber: React.FC<{ s: Scene; t: Theme }> = ({ s, t }) => {
+  const p = useSpr(0, { damping: 12, stiffness: 140 });
+  const glow = useSpr(0, { damping: 26, stiffness: 60 });
+  const l = useSpr(16);
+  return (
+    <Center>
+      <div style={{ position: "relative" }}>
+        <div style={{
+          position: "absolute", inset: -40, borderRadius: "50%",
+          background: `radial-gradient(circle, ${hexToRgba(t.accent, 0.5 * glow)}, transparent 70%)`,
+          filter: "blur(30px)",
+        }} />
+        <div style={{
+          fontSize: 320, fontWeight: 900, color: t.accent, position: "relative",
+          transform: `scale(${0.5 + 0.5 * p})`, opacity: p, letterSpacing: -6,
+          textShadow: `0 0 60px ${hexToRgba(t.accent, 0.6)}`,
+        }}>{clean(s.number)}</div>
+      </div>
+      <div style={{ fontSize: 72, fontWeight: 700, color: t.text, textAlign: "center", opacity: l,
+        transform: `translateY(${(1 - l) * 36}px)`, marginTop: 12, maxWidth: 760 }}>{clean(s.label || s.text)}</div>
+    </Center>
+  );
+};
+
+const Quote: React.FC<{ s: Scene; t: Theme }> = ({ s, t }) => {
+  const p = useSpr(0, { damping: 20, stiffness: 100 });
+  const a = useSpr(18);
+  return (
+    <Center>
+      <GlassCard pad={80}>
+        <div style={{ fontSize: 220, color: t.accent, lineHeight: 0.4, opacity: p, fontFamily: "Georgia, serif" }}>&ldquo;</div>
+        <div style={{ fontSize: 76, fontWeight: 800, color: t.text, textAlign: "center", opacity: p,
+          transform: `translateY(${(1 - p) * 40}px)`, maxWidth: 780, lineHeight: 1.25 }}>{clean(s.text)}</div>
+        {s.author ? <div style={{ fontSize: 46, color: t.accent, marginTop: 40, opacity: a, textAlign: "center",
+          fontWeight: 600, letterSpacing: 1 }}>— {clean(s.author)}</div> : null}
+      </GlassCard>
+    </Center>
+  );
+};
+
+// ---------- STORY: illustrated 2D character scenes ----------
+const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+
+const Character: React.FC<{ x: number; y: number; scale?: number; facing?: number; legPhase?: number; armsUp?: boolean; accent: string }> = ({ x, y, scale = 1, facing = 1, legPhase = 0, armsUp = false, accent }) => {
+  const legSwing = Math.sin(legPhase) * 26;
+  return (
+    <g transform={`translate(${x} ${y}) scale(${scale * facing} ${scale})`}>
+      {/* legs */}
+      <line x1={-10} y1={40} x2={-10 - legSwing * 0.4} y2={95} stroke="#2b2b3a" strokeWidth={14} strokeLinecap="round" />
+      <line x1={10} y1={40} x2={10 + legSwing * 0.4} y2={95} stroke="#2b2b3a" strokeWidth={14} strokeLinecap="round" />
+      {/* body */}
+      <rect x={-32} y={-10} width={64} height={58} rx={24} fill={accent} />
+      {/* arms */}
+      {armsUp ? (
+        <>
+          <line x1={-26} y1={0} x2={-46} y2={-46} stroke={accent} strokeWidth={13} strokeLinecap="round" />
+          <line x1={26} y1={0} x2={46} y2={-46} stroke={accent} strokeWidth={13} strokeLinecap="round" />
+        </>
       ) : (
-        <AbsoluteFill style={{ transform: `scale(${scale}) translate(${panX}px, ${panY}px)` }}>
-          <Img src={src} style={common} />
+        <>
+          <line x1={-28} y1={4} x2={-44 + Math.sin(legPhase + 1) * 8} y2={40} stroke={accent} strokeWidth={13} strokeLinecap="round" />
+          <line x1={28} y1={4} x2={44 - Math.sin(legPhase + 1) * 8} y2={40} stroke={accent} strokeWidth={13} strokeLinecap="round" />
+        </>
+      )}
+      {/* head */}
+      <circle cx={0} cy={-40} r={34} fill="#ffffff" />
+      <path d="M -22 -46 A 26 26 0 0 1 22 -46 L 20 -30 A 22 20 0 0 1 -20 -30 Z" fill="#0b0f1a" opacity={0.85} />
+    </g>
+  );
+};
+
+const Rocket: React.FC<{ x: number; y: number; angle: number; scale?: number; accent: string; text: string }> = ({ x, y, angle, scale = 1, accent }) => (
+  <g transform={`translate(${x} ${y}) rotate(${angle}) scale(${scale})`}>
+    <path d="M 0 -90 C 26 -50 30 20 20 60 L -20 60 C -30 20 -26 -50 0 -90 Z" fill={accent} />
+    <circle cx={0} cy={-10} r={14} fill="#0b0f1a" opacity={0.85} />
+    <path d="M -20 40 L -46 70 L -18 60 Z" fill="#ffffff" opacity={0.9} />
+    <path d="M 20 40 L 46 70 L 18 60 Z" fill="#ffffff" opacity={0.9} />
+    <path d="M -10 60 Q 0 100 10 60 Z" fill="#ffb44d" />
+  </g>
+);
+
+const DestinationIcon: React.FC<{ kind: StoryDestination; x: number; y: number; theme: Theme; glow?: number }> = ({ kind, x, y, theme, glow = 0 }) => {
+  if (kind === "none") return null;
+  const common = <g />;
+  return (
+    <g transform={`translate(${x} ${y})`}>
+      {glow > 0 && <circle r={140} fill={hexToRgba(theme.accent, 0.35 * glow)} style={{ filter: "blur(20px)" }} />}
+      {kind === "moon" && (
+        <g>
+          <circle r={110} fill="#d8dbe2" />
+          <circle cx={-30} cy={-20} r={16} fill="#b7bac3" />
+          <circle cx={25} cy={10} r={22} fill="#b7bac3" />
+          <circle cx={0} cy={45} r={12} fill="#b7bac3" />
+        </g>
+      )}
+      {kind === "mountain" && (
+        <g>
+          <path d="M -140 90 L 0 -110 L 140 90 Z" fill="#7b8794" />
+          <path d="M -30 -50 L 0 -110 L 30 -50 L 10 -40 L 0 -60 L -10 -40 Z" fill="#ffffff" />
+        </g>
+      )}
+      {kind === "city" && (
+        <g>
+          {[[-120, 60, 70, 130], [-40, 30, 80, 160], [50, 50, 60, 140], [120, 10, 50, 170]].map((r, i) => (
+            <rect key={i} x={r[0]} y={-(r[3] as number) + (r[1] as number)} width={r[2] as number} height={r[3] as number} fill="#5b6470" />
+          ))}
+        </g>
+      )}
+      {kind === "star" && (
+        <path d="M0 -110 L28 -34 L108 -34 L44 16 L68 92 L0 46 L-68 92 L-44 16 L-108 -34 L-28 -34 Z" fill="#ffd76a" />
+      )}
+      {kind === "flag" && (
+        <g>
+          <line x1={0} y1={100} x2={0} y2={-120} stroke="#cfd3da" strokeWidth={10} />
+          <path d="M 0 -120 L 100 -95 L 0 -70 Z" fill={theme.accent} />
+        </g>
+      )}
+      {kind === "lightbulb" && (
+        <g>
+          <circle r={70} fill="#ffe27a" opacity={glow > 0 ? 1 : 0.5} />
+          <rect x={-22} y={65} width={44} height={22} rx={6} fill="#8a8f9a" />
+          {glow > 0 && [0, 60, 120, 180, 240, 300].map((a, i) => (
+            <line key={i} x1={Math.cos((a * Math.PI) / 180) * 90} y1={Math.sin((a * Math.PI) / 180) * 90}
+              x2={Math.cos((a * Math.PI) / 180) * 115} y2={Math.sin((a * Math.PI) / 180) * 115}
+              stroke="#ffe27a" strokeWidth={6} strokeLinecap="round" />
+          ))}
+        </g>
+      )}
+      {common}
+    </g>
+  );
+};
+
+const Particles: React.FC<{ cx: number; cy: number; seedBase: number; count?: number; color: string; spread?: number; life: number }> = ({ cx, cy, seedBase, count = 10, color, spread = 140, life }) => {
+  const items = Array.from({ length: count }).map((_, i) => {
+    const seed = seedBase + i * 13.37;
+    const ang = ((seed * 47) % 360) * (Math.PI / 180);
+    const dist = life * spread * (0.4 + ((seed * 7) % 10) / 10);
+    const x = cx + Math.cos(ang) * dist;
+    const y = cy + Math.sin(ang) * dist - life * 40;
+    const o = Math.max(0, 1 - life);
+    const r = 5 + ((seed * 3) % 6);
+    return <circle key={i} cx={x} cy={y} r={r} fill={color} opacity={o} />;
+  });
+  return <g>{items}</g>;
+};
+
+const StarField: React.FC<{ frame: number }> = ({ frame }) => {
+  const stars = Array.from({ length: 40 }).map((_, i) => {
+    const seed = i * 97.13;
+    const x = (seed * 13) % 1080;
+    const y = (seed * 29) % 1100;
+    const tw = 0.4 + 0.6 * Math.abs(Math.sin(frame / 20 + i));
+    return <circle key={i} cx={x} cy={y} r={2 + (i % 3)} fill="#ffffff" opacity={tw} />;
+  });
+  return <g>{stars}</g>;
+};
+
+const Story: React.FC<{ s: Scene; t: Theme; duration: number }> = ({ s, t, duration }) => {
+  const f = useCurrentFrame();
+  const p = Math.min(1, Math.max(0, f / Math.max(1, duration)));
+  const action = s.action || "walk";
+  const vehicle = s.vehicle || "none";
+  const destination = s.destination || "none";
+  const destX = 800, destY = 420;
+  const groundY = 1420;
+  const caption = clean(s.text);
+  const captionP = spring({ frame: f, fps: 30, config: { damping: 18, stiffness: 110 } });
+
+  let charX = 300, charY = groundY, charScale = 1, charVisible = true, legPhase = f / 4, armsUp = false;
+  let vehicleEl: React.ReactNode = null;
+  let destGlow = 0;
+  let particlesEl: React.ReactNode = null;
+  let showStars = destination === "moon" || action === "launch";
+
+  if (action === "launch") {
+    const runEnd = 0.28, boardEnd = 0.4, flyEnd = 0.85;
+    if (p < runEnd) {
+      const lp = p / runEnd;
+      charX = interpolate(lp, [0, 1], [-120, 340]);
+      legPhase = f / 2.5;
+    } else if (p < boardEnd) {
+      const lp = (p - runEnd) / (boardEnd - runEnd);
+      charX = 340; charScale = 1 - lp; charVisible = lp < 0.96;
+      vehicleEl = <Rocket x={340} y={groundY - 60} angle={0} scale={0.4 + lp * 0.6} accent={t.accent} text="" />;
+    } else if (p < flyEnd) {
+      charVisible = false;
+      const lp = easeInOut((p - boardEnd) / (flyEnd - boardEnd));
+      const vx = interpolate(lp, [0, 1], [340, destX]);
+      const arc = -Math.sin(lp * Math.PI) * 260;
+      const vy = interpolate(lp, [0, 1], [groundY - 60, destY]) + arc;
+      const angle = interpolate(lp, [0, 1], [-6, -70]);
+      vehicleEl = <Rocket x={vx} y={vy} angle={angle} scale={1} accent={t.accent} text="" />;
+      particlesEl = <Particles cx={vx} cy={vy + 70} seedBase={Math.floor(f / 2)} color="#ffb44d" life={0.5} count={6} spread={60} />;
+    } else {
+      charVisible = false;
+      const lp = (p - flyEnd) / (1 - flyEnd);
+      const bounce = spring({ frame: f - Math.round(flyEnd * duration), fps: 30, config: { damping: 10, stiffness: 160 } });
+      const squash = 1 - Math.max(0, (1 - bounce)) * 0.25;
+      vehicleEl = <Rocket x={destX} y={destY + (1 - bounce) * 40} angle={-70} scale={squash} accent={t.accent} text="" />;
+      destGlow = Math.min(1, lp * 2);
+      if (lp < 0.4) particlesEl = <Particles cx={destX} cy={destY + 40} seedBase={7} color="#ffffff" life={lp / 0.4} count={12} spread={110} />;
+    }
+  } else if (action === "walk") {
+    const lp = easeInOut(Math.min(1, p / 0.7));
+    charX = interpolate(lp, [0, 1], [-120, destX - 160]);
+    legPhase = f / 3;
+    armsUp = p > 0.75;
+    destGlow = p > 0.5 ? 1 : 0;
+  } else if (action === "climb") {
+    const lp = easeInOut(p);
+    charX = interpolate(lp, [0, 1], [160, destX - 140]);
+    charY = interpolate(lp, [0, 1], [groundY, destY + 120]) - Math.abs(Math.sin(f / 3)) * 18;
+    legPhase = f / 2;
+    destGlow = p > 0.85 ? 1 : 0;
+  } else if (action === "think") {
+    charX = 540; charY = groundY - 40;
+    legPhase = f / 14;
+    destGlow = p > 0.35 ? Math.min(1, (p - 0.35) * 3) : 0;
+  } else if (action === "celebrate") {
+    charX = 540;
+    charY = groundY - Math.abs(Math.sin((f / 30) * Math.PI)) * 90;
+    armsUp = true; legPhase = f / 2;
+    particlesEl = <Particles cx={540} cy={groundY - 200} seedBase={Math.floor(f / 3)} color={t.accent} life={(f % 40) / 40} count={14} spread={220} />;
+  } else if (action === "search") {
+    charX = 540 + Math.sin((f / 60) * Math.PI * 2) * 140;
+    charY = groundY - 20;
+    legPhase = f / 6;
+  }
+
+  return (
+    <AbsoluteFill>
+      <svg width="100%" height="100%" viewBox="0 0 1080 1920" style={{ position: "absolute", inset: 0 }}>
+        {showStars && <StarField frame={f} />}
+        {destination !== "none" && <DestinationIcon kind={destination} x={destX} y={destY} theme={t} glow={destGlow} />}
+        {particlesEl}
+        {vehicleEl}
+        {charVisible && <Character x={charX} y={charY} scale={charScale} facing={1} legPhase={legPhase} armsUp={armsUp} accent={t.text === "#ffffff" ? t.accent : t.text} />}
+      </svg>
+      {caption && (
+        <AbsoluteFill style={{ justifyContent: "flex-start", alignItems: "center", paddingTop: 120, fontFamily: font }}>
+          <div style={{
+            fontSize: 56, fontWeight: 800, color: t.text, textAlign: "center", maxWidth: 760,
+            opacity: captionP, transform: `translateY(${(1 - captionP) * -20}px)`,
+            background: "rgba(0,0,0,0.35)", backdropFilter: "blur(10px)", borderRadius: 24, padding: "20px 36px",
+          }}>{caption}</div>
         </AbsoluteFill>
       )}
     </AbsoluteFill>
   );
 };
 
-const Scrim: React.FC = () => (
-  <AbsoluteFill style={{ background: "linear-gradient(180deg, rgba(0,0,0,0.38) 0%, rgba(0,0,0,0.12) 30%, rgba(0,0,0,0.20) 62%, rgba(0,0,0,0.62) 100%)" }} />
-);
-
-// ---------------- animated object / actor layer ----------------
-const Actor: React.FC<{ o: SceneObject; duration: number }> = ({ o, duration }) => {
-  const f = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  const delay = o.delay || 0;
-  const p = spring({ frame: f - delay, fps, config: { damping: 13, stiffness: 90 } });
-  const prog = interpolate(f, [delay, duration], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const [fx, fy] = o.from || [50, 50];
-  const [tx, ty] = o.to || o.from || [50, 50];
-  const x = fx + (tx - fx) * prog;
-  const y = fy + (ty - fy) * prog;
-  const spin = (o.spin || 0) * prog;
-  const bob = o.float ? Math.sin(f / 9) * 12 : 0;
-  return (
-    <div style={{ position: "absolute", left: `${x}%`, top: `${y}%`, transform: `translate(-50%, calc(-50% + ${bob}px)) scale(${p}) rotate(${spin}deg)`, fontSize: o.size || 170, lineHeight: 1, filter: "drop-shadow(0 8px 22px rgba(0,0,0,0.55))" }}>
-      {o.emoji}
-    </div>
-  );
-};
-
-const SceneObjects: React.FC<{ objects?: SceneObject[]; duration: number }> = ({ objects, duration }) => {
-  if (!objects || objects.length === 0) return null;
-  return (
-    <AbsoluteFill>
-      {objects.map((o, i) => <Actor key={i} o={o} duration={duration} />)}
-    </AbsoluteFill>
-  );
-};
-
-// ---------------- animated annotation layer (arrows / circles / underlines) ----------------
-const px = (p: number, axis: "x" | "y") => (axis === "x" ? (p / 100) * W : (p / 100) * H);
-
-const Annotations: React.FC<{ items?: Annotation[]; theme: Theme }> = ({ items, theme }) => {
-  const f = useCurrentFrame();
-  if (!items || items.length === 0) return null;
-  return (
-    <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ position: "absolute", inset: 0 }}>
-      <defs>
-        <marker id="arrowhead" markerWidth="6" markerHeight="6" refX="4" refY="3" orient="auto">
-          <path d="M0,0 L6,3 L0,6 Z" fill={theme.accent} />
-        </marker>
-      </defs>
-      {items.map((a, i) => {
-        const delay = a.delay || 0;
-        const dp = interpolate(f, [delay, delay + 18], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-        const color = a.color || theme.accent;
-        const dash = { pathLength: 1, strokeDasharray: 1 as unknown as string, strokeDashoffset: 1 - dp, opacity: Math.min(1, dp * 1.6) };
-        if (a.type === "circle") {
-          const at = a.at || [50, 50];
-          const r = px(a.r || 16, "x");
-          return <ellipse key={i} cx={px(at[0], "x")} cy={px(at[1], "y")} rx={r} ry={r} fill="none" stroke={color} strokeWidth={12} strokeLinecap="round" {...dash} />;
-        }
-        const from = a.from || [30, 50];
-        const to = a.to || [70, 50];
-        if (a.type === "underline") {
-          return <line key={i} x1={px(from[0], "x")} y1={px(from[1], "y")} x2={px(to[0], "x")} y2={px(to[1], "y")} stroke={color} strokeWidth={14} strokeLinecap="round" {...dash} />;
-        }
-        return <line key={i} x1={px(from[0], "x")} y1={px(from[1], "y")} x2={px(to[0], "x")} y2={px(to[1], "y")} stroke={color} strokeWidth={12} strokeLinecap="round" markerEnd="url(#arrowhead)" {...dash} />;
-      })}
-    </svg>
-  );
-};
-
-// ---------------- on-screen text templates (kept high so captions own the bottom) ----------------
-const Center: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <AbsoluteFill style={{ justifyContent: "flex-start", alignItems: "center", padding: "250px 90px 0", fontFamily: font }}>
-    {children}
-  </AbsoluteFill>
-);
-
-const shadow = "0 4px 24px rgba(0,0,0,0.8), 0 0 60px rgba(0,0,0,0.5)";
-
-const WordIn: React.FC<{ w: string; i: number; t: Theme }> = ({ w, i, t }) => {
-  const p = useSpring(i * 4, { damping: 12, stiffness: 120 });
-  return (
-    <span style={{ fontSize: 104, fontWeight: 900, color: i % 3 === 2 ? t.accent : "#fff", lineHeight: 1.1, transform: `translateY(${(1 - p) * 70}px) scale(${0.9 + 0.1 * p})`, opacity: p, textAlign: "center", textShadow: shadow }}>{w}</span>
-  );
-};
-
-const Title: React.FC<{ s: Scene; t: Theme }> = ({ s, t }) => {
-  const line = useSpring(4);
-  return (
-    <Center>
-      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "0 26px" }}>
-        {s.text.split(" ").map((w, i) => <WordIn key={i} w={w} i={i} t={t} />)}
-      </div>
-      <div style={{ marginTop: 40, height: 10, width: `${line * 240}px`, maxWidth: "70%", borderRadius: 8, background: t.accent, opacity: line, boxShadow: `0 0 30px ${t.accent}` }} />
-    </Center>
-  );
-};
-
-const Bullet: React.FC<{ text: string; delay: number; t: Theme }> = ({ text, delay, t }) => {
-  const p = useSpring(delay, { damping: 13, stiffness: 130 });
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 26, margin: "16px 0", opacity: p, transform: `translateX(${(1 - p) * 140}px)`, background: "rgba(0,0,0,0.4)", backdropFilter: "blur(6px)", padding: "16px 28px", borderRadius: 20 }}>
-      <div style={{ width: 28, height: 28, borderRadius: 14, background: t.accent, boxShadow: `0 0 24px ${t.accent}`, transform: `scale(${p})`, flexShrink: 0 }} />
-      <div style={{ fontSize: 66, fontWeight: 700, color: "#fff", textShadow: shadow }}>{text}</div>
-    </div>
-  );
-};
-
-const Bullets: React.FC<{ s: Scene; t: Theme }> = ({ s, t }) => {
-  const head = useSpring(0);
-  const items = s.items || [];
-  const gap = Math.max(12, (s.duration * 0.5) / Math.max(1, items.length));
-  return (
-    <Center>
-      <div style={{ fontSize: 84, fontWeight: 900, color: "#fff", textAlign: "center", marginBottom: 48, opacity: head, transform: `scale(${0.82 + 0.18 * head})`, textShadow: shadow }}>{s.text}</div>
-      {items.map((it, i) => <Bullet key={i} text={it} delay={12 + i * gap} t={t} />)}
-    </Center>
-  );
-};
-
-const BigNumber: React.FC<{ s: Scene; t: Theme }> = ({ s, t }) => {
-  const p = useSpring(0, { damping: 10, stiffness: 90 });
-  const l = useSpring(16);
-  const f = useCurrentFrame();
-  const pulse = 1 + 0.02 * Math.sin(f / 8);
-  return (
-    <Center>
-      <div style={{ position: "relative", display: "flex", justifyContent: "center", alignItems: "center" }}>
-        <div style={{ position: "absolute", width: 460, height: 460, borderRadius: 460, border: `6px solid ${alpha(t.accent, "66")}`, transform: `scale(${0.6 + 0.4 * p})`, opacity: p }} />
-        <div style={{ fontSize: 260, fontWeight: 900, color: t.accent, transform: `scale(${(0.4 + 0.6 * p) * pulse})`, opacity: p, textShadow: shadow }}>{s.number}</div>
-      </div>
-      <div style={{ fontSize: 70, fontWeight: 700, color: "#fff", textAlign: "center", opacity: l, transform: `translateY(${(1 - l) * 46}px)`, marginTop: 24, textShadow: shadow }}>{s.label || s.text}</div>
-    </Center>
-  );
-};
-
-const Quote: React.FC<{ s: Scene; t: Theme }> = ({ s, t }) => {
-  const p = useSpring(0);
-  const a = useSpring(22);
-  return (
-    <Center>
-      <div style={{ fontSize: 240, color: t.accent, lineHeight: 0.5, opacity: p, transform: `scale(${0.7 + 0.3 * p})`, textShadow: shadow }}>“</div>
-      <div style={{ fontSize: 76, fontWeight: 800, color: "#fff", textAlign: "center", opacity: p, transform: `translateY(${(1 - p) * 56}px)`, fontStyle: "italic", textShadow: shadow }}>{s.text}</div>
-      {s.author ? <div style={{ fontSize: 52, color: t.accent, marginTop: 44, opacity: a, letterSpacing: 2, textShadow: shadow }}>— {s.author}</div> : null}
-    </Center>
-  );
-};
-
-const Overlay: React.FC<{ s: Scene; t: Theme }> = ({ s, t }) => {
+const SceneView: React.FC<{ s: Scene; t: Theme }> = ({ s, t }) => {
   switch (s.template) {
     case "bullet-reveal": return <Bullets s={s} t={t} />;
     case "big-number": return <BigNumber s={s} t={t} />;
     case "quote": return <Quote s={s} t={t} />;
+    case "story": return <Story s={s} t={t} duration={s.duration} />;
     default: return <Title s={s} t={t} />;
   }
 };
 
-// Directional transition: slide + fade so cuts feel intentional.
-const Transition: React.FC<{ duration: number; index: number; children: React.ReactNode }> = ({ duration, index, children }) => {
+// ---------- Captions: fixed zone, controlled, karaoke highlight ----------
+const Captions: React.FC<{ words: Word[]; t: Theme }> = ({ words, t }) => {
   const f = useCurrentFrame();
-  const IN = 12;
-  const OUT = 12;
-  const dir = index % 2 === 0 ? 1 : -1;
-  const o = interpolate(f, [0, IN, duration - OUT, duration], [0, 1, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const inX = interpolate(f, [0, IN], [90 * dir, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const outX = interpolate(f, [duration - OUT, duration], [0, -70 * dir], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const scale = interpolate(f, [0, IN], [1.04, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  return <AbsoluteFill style={{ opacity: o, transform: `translateX(${inX + outX}px) scale(${scale})` }}>{children}</AbsoluteFill>;
-};
+  if (!words.length) return null;
+  let cur = words.findIndex((w) => f >= w.start && f <= w.end + 4);
+  if (cur === -1) cur = Math.max(0, words.findIndex((w) => w.start > f) - 1);
+  const CHUNK = 4;
+  const chunkStart = Math.floor(cur / CHUNK) * CHUNK;
+  const chunk = words.slice(chunkStart, chunkStart + CHUNK);
+  const activeInChunk = cur - chunkStart;
 
-// ---------------- captions (word-timed, lower third, never full-screen) ----------------
-type Phrase = { words: Word[]; start: number; end: number };
-const groupWords = (words: Word[], size = 4): Phrase[] => {
-  const out: Phrase[] = [];
-  for (let i = 0; i < words.length; i += size) {
-    const g = words.slice(i, i + size);
-    if (g.length === 0) continue;
-    out.push({ words: g, start: g[0].start, end: g[g.length - 1].end });
-  }
-  return out;
-};
-
-const Captions: React.FC<{ words: Word[]; theme: Theme; total: number }> = ({ words, theme, total }) => {
-  const f = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  const t = f / fps;
-  const hideAfter = (total - fps * 3) / fps; // clear out before the Like/Subscribe end-card
-  if (!words || words.length === 0 || t >= hideAfter) return null;
-  const phrases = groupWords(words, 4);
-  let active = phrases.find((p) => t >= p.start && t <= p.end + 0.15);
-  if (!active) {
-    active = phrases.filter((p) => p.start <= t).slice(-1)[0];
-  }
-  if (!active || t < phrases[0].start - 0.05) return null;
   return (
-    <AbsoluteFill style={{ justifyContent: "flex-end", alignItems: "center", paddingBottom: 360, fontFamily: font, pointerEvents: "none" }}>
-      <div style={{ maxWidth: 900, display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "6px 16px", background: "rgba(0,0,0,0.55)", backdropFilter: "blur(6px)", padding: "18px 30px", borderRadius: 22 }}>
-        {active.words.map((w, i) => {
-          const on = t >= w.start && t <= w.end + 0.05;
-          return (
-            <span key={i} style={{ fontSize: 62, fontWeight: 800, color: on ? theme.accent : "#fff", textShadow: "0 3px 14px rgba(0,0,0,0.8)", transform: on ? "translateY(-2px)" : "none", transition: "none" }}>{w.word}</span>
-          );
-        })}
-      </div>
-    </AbsoluteFill>
-  );
-};
-
-// ---------------- Like + Subscribe end-card (compact, low, last ~3s) ----------------
-const ThumbIcon: React.FC = () => (
-  <svg width="46" height="46" viewBox="0 0 24 24" fill="#ffffff" style={{ flexShrink: 0 }}>
-    <path d="M2 21h2V9H2v12zm20-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L13.17 1 6.59 7.59C6.22 7.95 6 8.45 6 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z" />
-  </svg>
-);
-
-const BellIcon: React.FC = () => (
-  <svg width="42" height="42" viewBox="0 0 24 24" fill="#ffffff" style={{ flexShrink: 0 }}>
-    <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5S10.5 3.17 10.5 4v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" />
-  </svg>
-);
-
-const EndCard: React.FC<{ t: Theme; total: number }> = ({ t, total }) => {
-  const { fps } = useVideoConfig();
-  const f = useCurrentFrame();
-  const showFor = Math.round(fps * 3);
-  const start = Math.max(0, total - showFor);
-  if (f < start) return null;
-  const local = f - start;
-  const p = spring({ frame: local, fps, config: { damping: 15, stiffness: 120 } });
-  const out = interpolate(f, [total - 8, total], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const like = spring({ frame: local - 6, fps, config: { damping: 10, stiffness: 160 } });
-  const sub = spring({ frame: local - 16, fps, config: { damping: 10, stiffness: 160 } });
-  const pulse = 1 + 0.03 * Math.sin(local / 5);
-  return (
-    <AbsoluteFill style={{ justifyContent: "flex-end", alignItems: "center", paddingBottom: 210, fontFamily: font, opacity: out, pointerEvents: "none" }}>
-      <div style={{ display: "flex", gap: 26, alignItems: "center", transform: `translateY(${(1 - p) * 90}px)`, opacity: p }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16, background: "rgba(20,20,26,0.72)", backdropFilter: "blur(10px)", border: "2px solid rgba(255,255,255,0.16)", padding: "20px 34px", borderRadius: 999, boxShadow: "0 10px 40px rgba(0,0,0,0.5)", transform: `scale(${(0.7 + 0.3 * like) * pulse})` }}>
-          <ThumbIcon />
-          <span style={{ fontSize: 46, fontWeight: 800, color: "#fff", letterSpacing: 0.5 }}>Like</span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 16, background: "#ff0033", padding: "20px 38px", borderRadius: 999, boxShadow: `0 10px 44px rgba(255,0,51,0.45)`, transform: `scale(${(0.7 + 0.3 * sub) * pulse})` }}>
-          <BellIcon />
-          <span style={{ fontSize: 46, fontWeight: 900, color: "#fff", letterSpacing: 0.5 }}>Subscribe</span>
+    <AbsoluteFill style={{ justifyContent: "flex-end", alignItems: "center", paddingBottom: 300, fontFamily: font }}>
+      <div style={{
+        display: "flex", justifyContent: "center", background: "rgba(0,0,0,0.42)",
+        backdropFilter: "blur(10px)", borderRadius: 26, padding: "22px 44px", maxWidth: 880,
+      }}>
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", justifyContent: "center" }}>
+          {chunk.map((w, i) => {
+            const active = i === activeInChunk;
+            const wp = spring({ frame: f - w.start, fps: 30, config: { damping: 14, stiffness: 200 } });
+            return (
+              <span key={chunkStart + i} style={{
+                fontSize: 58, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.5,
+                color: active ? t.accent : "#fff",
+                transform: `scale(${active ? 0.94 + 0.14 * Math.min(1, wp) : 1})`,
+                transition: "color 0.1s",
+              }}>{clean(w.word)}</span>
+            );
+          })}
         </div>
       </div>
     </AbsoluteFill>
   );
 };
 
-export const Short: React.FC<ShortProps> = ({ theme, scenes, words, hasMusic }) => {
-  const { durationInFrames } = useVideoConfig();
+// ---------- Progress bar ----------
+const ProgressBar: React.FC<{ theme: Theme; totalFrames: number }> = ({ theme, totalFrames }) => {
+  const f = useCurrentFrame();
+  const pct = Math.min(1, f / Math.max(1, totalFrames));
   return (
-    <AbsoluteFill style={{ background: theme.background }}>
+    <AbsoluteFill style={{ justifyContent: "flex-start" }}>
+      <div style={{ height: 8, width: "100%", background: "rgba(255,255,255,0.12)" }}>
+        <div style={{ height: "100%", width: `${pct * 100}%`, background: theme.accent,
+          boxShadow: `0 0 16px ${hexToRgba(theme.accent, 0.8)}` }} />
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+export const Short: React.FC<ShortProps> = ({ theme, scenes, words, hasMusic, totalFrames }) => {
+  const frame = useCurrentFrame();
+  return (
+    <AbsoluteFill>
+      <Background theme={theme} frame={frame} totalFrames={totalFrames} />
       {scenes.map((s, i) => (
         <Sequence key={i} from={s.from} durationInFrames={s.duration}>
-          <Transition duration={s.duration} index={i}>
-            <MediaBG s={s} theme={theme} duration={s.duration} index={i} />
-            <Scrim />
-            <SceneObjects objects={s.objects} duration={s.duration} />
-          </Transition>
+          <SceneWrap duration={s.duration}><SceneView s={s} t={theme} /></SceneWrap>
         </Sequence>
       ))}
-      <Captions words={words} theme={theme} total={durationInFrames} />
-      <EndCard t={theme} total={durationInFrames} />
-      <Audio src={staticFile("voiceover.wav")} />
+      <Captions words={words} t={theme} />
+      <ProgressBar theme={theme} totalFrames={totalFrames} />
+      {words.length > 0 && <Audio src={staticFile("voiceover.wav")} />}
       {hasMusic && <Audio src={staticFile("music.mp3")} volume={0.07} loop />}
     </AbsoluteFill>
   );
