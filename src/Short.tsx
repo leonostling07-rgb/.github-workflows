@@ -1,5 +1,6 @@
 import React from "react";
 import { AbsoluteFill, Audio, Sequence, staticFile, useCurrentFrame, useVideoConfig, spring, interpolate } from "remotion";
+import { SubmarineDescent } from "./scenes/SubmarineDescent";
 
 export type Theme = { background: string; accent: string; text: string };
 export type StoryAction = "launch" | "walk" | "climb" | "think" | "celebrate" | "search";
@@ -9,6 +10,7 @@ export type Scene = {
   template: "title" | "bullet-reveal" | "big-number" | "quote" | "story";
   text: string; items?: string[]; number?: string; label?: string; author?: string;
   action?: StoryAction; vehicle?: StoryVehicle; destination?: StoryDestination;
+  scene?: string;
   from: number; duration: number;
 };
 export type Word = { word: string; start: number; end: number };
@@ -16,8 +18,6 @@ export type ShortProps = { title: string; theme: Theme; scenes: Scene[]; words: 
 
 const font = '"Inter", "Helvetica Neue", Arial, sans-serif';
 
-// Strip emoji / pictographs so stray characters from an AI script never
-// break layout or wrap unpredictably. Keep plain punctuation and letters only.
 const clean = (s: string | undefined | null) =>
   (s || "")
     .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\uFE0F]/gu, "")
@@ -41,7 +41,6 @@ const hexToRgba = (hex: string, a: number) => {
   return `rgba(${r},${g},${b},${a})`;
 };
 
-// ---------- Cinematic layered background ----------
 const Blob: React.FC<{ cx: number; cy: number; r: number; color: string; speed: number; phase: number }> = ({ cx, cy, r, color, speed, phase }) => {
   const f = useCurrentFrame();
   const x = cx + 6 * Math.sin(f / speed + phase);
@@ -65,18 +64,15 @@ const Background: React.FC<{ theme: Theme; frame: number; totalFrames: number }>
         <Blob cx={80} cy={70} r={700} color={hexToRgba(theme.accent, 0.55)} speed={130} phase={2} />
         <Blob cx={55} cy={45} r={520} color={hexToRgba(theme.text, 0.12)} speed={160} phase={4} />
       </AbsoluteFill>
-      {/* fine grain for texture */}
       <AbsoluteFill style={{
         backgroundImage: "radial-gradient(rgba(255,255,255,0.035) 1px, transparent 1px)",
         backgroundSize: "3px 3px", mixBlendMode: "overlay", opacity: 0.5,
       }} />
-      {/* vignette */}
       <AbsoluteFill style={{ background: "radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,0.55) 100%)" }} />
     </AbsoluteFill>
   );
 };
 
-// ---------- Scene transition wrapper: rotates through 4 distinct transitions ----------
 const SceneWrap: React.FC<{ duration: number; variant: number; children: React.ReactNode }> = ({ duration, variant, children }) => {
   const f = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -87,35 +83,29 @@ const SceneWrap: React.FC<{ duration: number; variant: number; children: React.R
   const v = variant % 4;
 
   if (v === 1) {
-    // slide from the right, punch out to the left
     const inP = spring({ frame: f, fps, config: { damping: 20, stiffness: 140 } });
     const x = (1 - inP) * 340 - outP * 300;
     const rot = (1 - inP) * 4 - outP * 3;
     return <AbsoluteFill style={{ opacity, transform: `translateX(${x}px) rotate(${rot}deg)` }}>{children}</AbsoluteFill>;
   }
   if (v === 2) {
-    // zoom punch in, shrink-fade out
     const inP = spring({ frame: f, fps, config: { damping: 11, stiffness: 170 } });
     const scale = 1.4 - 0.4 * inP - outP * 0.15;
     const blur = (1 - inP) * 8 + outP * 6;
     return <AbsoluteFill style={{ opacity, transform: `scale(${scale})`, filter: `blur(${blur}px)` }}>{children}</AbsoluteFill>;
   }
   if (v === 3) {
-    // slide up with a slight skew, drop-fade out
     const inP = spring({ frame: f, fps, config: { damping: 20, stiffness: 120 } });
-    const y = (1 - inP) * 220 - outP * -160 * 0 + outP * 0; // base
     const yFinal = (1 - inP) * 220 + outP * -140;
     const skew = (1 - inP) * 5;
     return <AbsoluteFill style={{ opacity, transform: `translateY(${yFinal}px) skewY(${skew}deg)` }}>{children}</AbsoluteFill>;
   }
-  // v === 0: classic fade + scale
   const inP = spring({ frame: f, fps, config: { damping: 18, stiffness: 130 } });
   const scale = 0.94 + 0.06 * inP - 0.05 * outP;
   const blur = outP * 6;
   return <AbsoluteFill style={{ opacity, transform: `scale(${scale})`, filter: `blur(${blur}px)` }}>{children}</AbsoluteFill>;
 };
 
-// ---------- Emoji system: content-aware, variable size, edge-biased so text stays readable ----------
 const EMOJI_RULES: { match: string[]; emojis: string[] }[] = [
   { match: ["rocket", "space", "moon", "mars", "astronaut", "launch", "orbit"], emojis: ["🚀", "🌕", "✨", "🛰️", "👨‍🚀"] },
   { match: ["money", "dollar", "cash", "pay", "fee", "cost", "price", "euro", "€", "$", "£"], emojis: ["💰", "💵", "🪙", "📈"] },
@@ -139,7 +129,6 @@ const EMOJI_RULES: { match: string[]; emojis: string[] }[] = [
   { match: ["music", "song", "sound"], emojis: ["🎵", "🎶"] },
   { match: ["star", "famous", "dream", "wish"], emojis: ["⭐", "🌟"] },
   { match: ["mountain", "climb", "peak"], emojis: ["⛰️", "🏔️", "🚩"] },
-  { match: ["win", "goal", "flag"], emojis: ["🚩", "🏁"] },
 ];
 const GENERIC_POOL = ["✨", "🔥", "💯", "⚡", "🌟", "🎯", "💥", "👀"];
 
@@ -153,7 +142,6 @@ const pickEmojis = (text: string, count: number): string[] => {
   return out;
 };
 
-// Ambient + accent emojis, edge-biased so the readable center stays clear. Size varies per emoji.
 const FloatingEmojis: React.FC<{ text: string; sceneIndex: number; count?: number }> = ({ text, sceneIndex, count = 7 }) => {
   const f = useCurrentFrame();
   const emojis = pickEmojis(text, count);
@@ -165,7 +153,7 @@ const FloatingEmojis: React.FC<{ text: string; sceneIndex: number; count?: numbe
         const rad = 370 + ((seed * 13) % 280);
         const cx = Math.min(1030, Math.max(50, 540 + Math.cos((angle * Math.PI) / 180) * rad));
         const cy = Math.min(1560, Math.max(90, 760 + Math.sin((angle * Math.PI) / 180) * rad * 1.15));
-        const size = 42 + ((seed * 7) % 130); // 42 - 172px: variable, small to large
+        const size = 42 + ((seed * 7) % 130);
         const ambient = size > 110;
         const floatY = Math.sin(f / 40 + seed) * 20;
         const floatX = Math.cos(f / 55 + seed) * 12;
@@ -185,16 +173,6 @@ const FloatingEmojis: React.FC<{ text: string; sceneIndex: number; count?: numbe
   );
 };
 
-const HeroEmoji: React.FC<{ emoji: string; size: number; delay?: number }> = ({ emoji, size, delay = 0 }) => {
-  const p = useSpr(delay, { damping: 12, stiffness: 170 });
-  return (
-    <div style={{
-      fontSize: size, transform: `scale(${0.3 + 0.7 * p}) rotate(${(1 - p) * 22}deg)`,
-      opacity: p, marginBottom: 8, filter: "drop-shadow(0 10px 24px rgba(0,0,0,0.4))",
-    }}>{emoji}</div>
-  );
-};
-
 const GlassCard: React.FC<{ children: React.ReactNode; pad?: number }> = ({ children, pad = 64 }) => (
   <div style={{
     background: "rgba(255,255,255,0.06)",
@@ -211,7 +189,6 @@ const Center: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   </AbsoluteFill>
 );
 
-// ---------- Masked text reveal (cinematic wipe, not flying words) ----------
 const MaskedText: React.FC<{ text: string; fontSize: number; weight: number; color: string; delay?: number; align?: "center" | "left" }> = ({ text, fontSize, weight, color, delay = 0, align = "center" }) => {
   const p = useSpr(delay, { damping: 22, stiffness: 90 });
   const reveal = interpolate(p, [0, 1], [100, 0]);
@@ -226,7 +203,6 @@ const MaskedText: React.FC<{ text: string; fontSize: number; weight: number; col
   );
 };
 
-// ---------- Templates ----------
 const Title: React.FC<{ s: Scene; t: Theme }> = ({ s, t }) => {
   const text = clean(s.text);
   const words = text.split(" ");
@@ -317,19 +293,15 @@ const Quote: React.FC<{ s: Scene; t: Theme }> = ({ s, t }) => {
   );
 };
 
-// ---------- STORY: illustrated 2D character scenes ----------
 const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
 
 const Character: React.FC<{ x: number; y: number; scale?: number; facing?: number; legPhase?: number; armsUp?: boolean; accent: string }> = ({ x, y, scale = 1, facing = 1, legPhase = 0, armsUp = false, accent }) => {
   const legSwing = Math.sin(legPhase) * 26;
   return (
     <g transform={`translate(${x} ${y}) scale(${scale * facing} ${scale})`}>
-      {/* legs */}
       <line x1={-10} y1={40} x2={-10 - legSwing * 0.4} y2={95} stroke="#2b2b3a" strokeWidth={14} strokeLinecap="round" />
       <line x1={10} y1={40} x2={10 + legSwing * 0.4} y2={95} stroke="#2b2b3a" strokeWidth={14} strokeLinecap="round" />
-      {/* body */}
       <rect x={-32} y={-10} width={64} height={58} rx={24} fill={accent} />
-      {/* arms */}
       {armsUp ? (
         <>
           <line x1={-26} y1={0} x2={-46} y2={-46} stroke={accent} strokeWidth={13} strokeLinecap="round" />
@@ -341,14 +313,13 @@ const Character: React.FC<{ x: number; y: number; scale?: number; facing?: numbe
           <line x1={28} y1={4} x2={44 - Math.sin(legPhase + 1) * 8} y2={40} stroke={accent} strokeWidth={13} strokeLinecap="round" />
         </>
       )}
-      {/* head */}
       <circle cx={0} cy={-40} r={34} fill="#ffffff" />
       <path d="M -22 -46 A 26 26 0 0 1 22 -46 L 20 -30 A 22 20 0 0 1 -20 -30 Z" fill="#0b0f1a" opacity={0.85} />
     </g>
   );
 };
 
-const Rocket: React.FC<{ x: number; y: number; angle: number; scale?: number; accent: string; text: string }> = ({ x, y, angle, scale = 1, accent }) => (
+const Rocket: React.FC<{ x: number; y: number; angle: number; scale?: number; accent: string }> = ({ x, y, angle, scale = 1, accent }) => (
   <g transform={`translate(${x} ${y}) rotate(${angle}) scale(${scale})`}>
     <path d="M 0 -90 C 26 -50 30 20 20 60 L -20 60 C -30 20 -26 -50 0 -90 Z" fill={accent} />
     <circle cx={0} cy={-10} r={14} fill="#0b0f1a" opacity={0.85} />
@@ -360,7 +331,6 @@ const Rocket: React.FC<{ x: number; y: number; angle: number; scale?: number; ac
 
 const DestinationIcon: React.FC<{ kind: StoryDestination; x: number; y: number; theme: Theme; glow?: number }> = ({ kind, x, y, theme, glow = 0 }) => {
   if (kind === "none") return null;
-  const common = <g />;
   return (
     <g transform={`translate(${x} ${y})`}>
       {glow > 0 && <circle r={140} fill={hexToRgba(theme.accent, 0.35 * glow)} style={{ filter: "blur(20px)" }} />}
@@ -405,7 +375,6 @@ const DestinationIcon: React.FC<{ kind: StoryDestination; x: number; y: number; 
           ))}
         </g>
       )}
-      {common}
     </g>
   );
 };
@@ -435,8 +404,6 @@ const StarField: React.FC<{ frame: number }> = ({ frame }) => {
   return <g>{stars}</g>;
 };
 
-// When the AI didn't set action/vehicle/destination, infer something sensible
-// from the scene's own text instead of always defaulting to "walk".
 const FALLBACK_ACTIONS: StoryAction[] = ["walk", "think", "climb", "celebrate", "search", "launch"];
 const FALLBACK_DESTS: StoryDestination[] = ["star", "lightbulb", "mountain", "flag", "city", "moon"];
 const inferStory = (s: Scene, sceneIndex: number) => {
@@ -470,7 +437,7 @@ const inferStory = (s: Scene, sceneIndex: number) => {
 const Story: React.FC<{ s: Scene; t: Theme; duration: number; sceneIndex: number }> = ({ s, t, duration, sceneIndex }) => {
   const f = useCurrentFrame();
   const p = Math.min(1, Math.max(0, f / Math.max(1, duration)));
-  const { action, vehicle, destination } = inferStory(s, sceneIndex);
+  const { action, destination } = inferStory(s, sceneIndex);
   const destX = 800, destY = 420;
   const groundY = 1420;
   const caption = clean(s.text);
@@ -491,7 +458,7 @@ const Story: React.FC<{ s: Scene; t: Theme; duration: number; sceneIndex: number
     } else if (p < boardEnd) {
       const lp = (p - runEnd) / (boardEnd - runEnd);
       charX = 340; charScale = 1 - lp; charVisible = lp < 0.96;
-      vehicleEl = <Rocket x={340} y={groundY - 60} angle={0} scale={0.4 + lp * 0.6} accent={t.accent} text="" />;
+      vehicleEl = <Rocket x={340} y={groundY - 60} angle={0} scale={0.4 + lp * 0.6} accent={t.accent} />;
     } else if (p < flyEnd) {
       charVisible = false;
       const lp = easeInOut((p - boardEnd) / (flyEnd - boardEnd));
@@ -499,14 +466,14 @@ const Story: React.FC<{ s: Scene; t: Theme; duration: number; sceneIndex: number
       const arc = -Math.sin(lp * Math.PI) * 260;
       const vy = interpolate(lp, [0, 1], [groundY - 60, destY]) + arc;
       const angle = interpolate(lp, [0, 1], [-6, -70]);
-      vehicleEl = <Rocket x={vx} y={vy} angle={angle} scale={1} accent={t.accent} text="" />;
+      vehicleEl = <Rocket x={vx} y={vy} angle={angle} scale={1} accent={t.accent} />;
       particlesEl = <Particles cx={vx} cy={vy + 70} seedBase={Math.floor(f / 2)} color="#ffb44d" life={0.5} count={6} spread={60} />;
     } else {
       charVisible = false;
       const lp = (p - flyEnd) / (1 - flyEnd);
       const bounce = spring({ frame: f - Math.round(flyEnd * duration), fps: 30, config: { damping: 10, stiffness: 160 } });
       const squash = 1 - Math.max(0, (1 - bounce)) * 0.25;
-      vehicleEl = <Rocket x={destX} y={destY + (1 - bounce) * 40} angle={-70} scale={squash} accent={t.accent} text="" />;
+      vehicleEl = <Rocket x={destX} y={destY + (1 - bounce) * 40} angle={-70} scale={squash} accent={t.accent} />;
       destGlow = Math.min(1, lp * 2);
       if (lp < 0.4) particlesEl = <Particles cx={destX} cy={destY + 40} seedBase={7} color="#ffffff" life={lp / 0.4} count={12} spread={110} />;
     }
@@ -559,7 +526,10 @@ const Story: React.FC<{ s: Scene; t: Theme; duration: number; sceneIndex: number
   );
 };
 
-const SceneView: React.FC<{ s: Scene; t: Theme; sceneIndex: number }> = ({ s, t, sceneIndex }) => {
+const SceneView: React.FC<{ s: Scene; t: Theme; sceneIndex: number; words: Word[]; sceneFrom: number }> = ({ s, t, sceneIndex, words, sceneFrom }) => {
+  if (s.template === "story" && s.scene === "submarine_descent") {
+    return <SubmarineDescent sceneFrom={sceneFrom} duration={s.duration} words={words} theme={t} />;
+  }
   switch (s.template) {
     case "bullet-reveal": return <Bullets s={s} t={t} />;
     case "big-number": return <BigNumber s={s} t={t} />;
@@ -569,7 +539,6 @@ const SceneView: React.FC<{ s: Scene; t: Theme; sceneIndex: number }> = ({ s, t,
   }
 };
 
-// ---------- Captions: fixed zone, controlled, karaoke highlight ----------
 const Captions: React.FC<{ words: Word[]; t: Theme }> = ({ words, t }) => {
   const f = useCurrentFrame();
   if (!words.length) return null;
@@ -605,7 +574,6 @@ const Captions: React.FC<{ words: Word[]; t: Theme }> = ({ words, t }) => {
   );
 };
 
-// ---------- Progress bar ----------
 const ProgressBar: React.FC<{ theme: Theme; totalFrames: number }> = ({ theme, totalFrames }) => {
   const f = useCurrentFrame();
   const pct = Math.min(1, f / Math.max(1, totalFrames));
@@ -626,7 +594,9 @@ export const Short: React.FC<ShortProps> = ({ theme, scenes, words, hasMusic, to
       <Background theme={theme} frame={frame} totalFrames={totalFrames} />
       {scenes.map((s, i) => (
         <Sequence key={i} from={s.from} durationInFrames={s.duration}>
-          <SceneWrap duration={s.duration}><SceneView s={s} t={theme} sceneIndex={i} /></SceneWrap>
+          <SceneWrap duration={s.duration} variant={i}>
+            <SceneView s={s} t={theme} sceneIndex={i} words={words} sceneFrom={s.from} />
+          </SceneWrap>
         </Sequence>
       ))}
       <Captions words={words} t={theme} />
