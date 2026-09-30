@@ -56,4 +56,15 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: Render
-        run: npx
+        run: npx remotion render src/index.ts Short out/latest.mp4 --props=props.json --codec=h264 --concurrency=2
+
+      - name: Commit result
+        run: |
+          mkdir -p videos
+          cp out/latest.mp4 videos/latest.mp4
+          git config user.name "render-bot"
+          git config user.email "render-bot@users.noreply.github.com"
+          git add videos/latest.mp4
+          git commit -m "Render video" || echo "nothing to commit"
+          git pull --rebase || true
+          git push
