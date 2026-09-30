@@ -3,11 +3,11 @@ name: render-video
 on:
   workflow_dispatch:
     inputs:
-      script:     { description: "Voiceover text", required: true, type: string }
-      scenes:     { description: "Scenes JSON array", required: true, type: string }
-      title:      { description: "Video title", required: true, type: string }
-      theme:      { description: "Theme JSON", required: true, type: string }
-      audio_path: { description: "Unused (voice is made here)", required: false, type: string, default: "" }
+      script:     { description: "Voiceover text", required: false, type: string, default: "" }
+      scenes:     { description: "Scenes JSON array", required: false, type: string, default: "[]" }
+      title:      { description: "Video title", required: false, type: string, default: "AI Short" }
+      theme:      { description: "Theme JSON", required: false, type: string, default: "{}" }
+      demo:       { description: "Render the submarine demo instead of AI props", required: false, type: boolean, default: false }
 
 permissions:
   contents: write
@@ -32,10 +32,18 @@ jobs:
             libxrandr2 libxkbcommon-dev libxfixes3 libxcomposite1 libxdamage1 \
             libatk-bridge2.0-0 libpango-1.0-0 libcairo2 libcups2 ffmpeg
 
+      - name: Demo mode — skip AI, use demo props
+        if: ${{ inputs.demo }}
+        run: |
+          cp demo-props.json props.json
+          echo "DEMO MODE"
+
       - name: Install python tools
+        if: ${{ !inputs.demo }}
         run: pip install faster-whisper edge-tts
 
       - name: Make voiceover (free, edge-tts)
+        if: ${{ !inputs.demo }}
         env:
           SCRIPT_TEXT: ${{ inputs.script }}
         run: |
@@ -44,6 +52,7 @@ jobs:
           ffmpeg -y -i voice.mp3 -ar 24000 -ac 1 voice.wav
 
       - name: Prepare props (whisper word timings + scene timing)
+        if: ${{ !inputs.demo }}
         env:
           IN_SCRIPT: ${{ inputs.script }}
           IN_SCENES: ${{ inputs.scenes }}
