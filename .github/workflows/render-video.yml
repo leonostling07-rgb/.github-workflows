@@ -32,10 +32,12 @@ jobs:
             libxrandr2 libxkbcommon-dev libxfixes3 libxcomposite1 libxdamage1 \
             libatk-bridge2.0-0 libpango-1.0-0 libcairo2 libcups2 ffmpeg
 
-      - name: Demo mode — skip AI, use demo props
+      - name: Demo mode — use demo props and a silent voiceover
         if: ${{ inputs.demo }}
         run: |
           cp demo-props.json props.json
+          mkdir -p public
+          ffmpeg -y -f lavfi -i anullsrc=r=24000:cl=mono -t 12 -q:a 9 -acodec pcm_s16le public/voiceover.wav
           echo "DEMO MODE"
 
       - name: Install python tools
